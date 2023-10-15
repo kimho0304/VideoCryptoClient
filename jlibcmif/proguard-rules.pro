@@ -1,0 +1,1 @@
+-keep class kr.taemin.android.usbserial.driver.* { *; }
