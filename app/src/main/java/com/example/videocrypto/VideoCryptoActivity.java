@@ -67,7 +67,6 @@ public class VideoCryptoActivity extends AppCompatActivity {
     private Handler mainHandler;
     private String ip = "192.168.0.14";
     private int port = 9090;
-    private File mBufferFile;
     private File file;
 
     // UI variables definition ↓
@@ -152,9 +151,9 @@ public class VideoCryptoActivity extends AppCompatActivity {
         return new Thread(() -> { // 새로운 스레드 객체 생성; isReachble 메소드는 메인 스레드가 아닌 별도의 스레드에서 실행되어야 하기 때문.
             try { // 서버 ip(192.168.0.22)에 대해, isReachble 메소드를 통해 해당 서버가 열려있는지 확인. 해당 메소드의 반환값은 Boolean형임.
                 if (!(InetAddress.getByName(ip).isReachable(5000))) { // 만약 서버가 닫혀 있어 접속이 불가능하면(false 반환):
-                    // printLog("Server is offline.");
+                    printLog("Server is offline.");
                 } else { // 만약 서버에 접속 가능하다면(true 반환):
-                    // printLog("Connecting to the server.");
+                    printLog("Connecting to the server.");
 
                     try { // 앞서 정의된 ip(192.168.0.XX)와 port(9090)로 새로운 소켓 객체를 할당. new Socket 구문은 try/catch문 작성이 필수이므로 try/catch문도 추가함.
                         serverSocket = new Socket(ip, port);
@@ -162,22 +161,22 @@ public class VideoCryptoActivity extends AppCompatActivity {
                         InetAddress clientHost = serverSocket.getLocalAddress();
                         int clientPort = serverSocket.getPort();
 
-                        // printLog("Connection Success.");
-                        // printLog("The Client is connected: " + clientHost + ":" + clientPort + ", host: " + clientHost.getHostName());
+                        printLog("Connection Success.");
+                        printLog("The Client is connected: " + clientHost + ":" + clientPort + ", host: " + clientHost.getHostName());
                         Log.i(TAG, "Server is connected: " + clientHost + ":" + clientPort + ", host: " + clientHost.getHostName());
 
                     } catch (IOException e) {
-                        // printLog("Failed to allocate the serverSocket: " + e);
+                        printLog("Failed to allocate the serverSocket: " + e);
                         Log.e("isServerOnline", "Failed to allocate the serverSocket: " + e);
                         e.printStackTrace();
                     }
                 }
             } catch (UnknownHostException e) { // 해당 호스트 정보(ip)를 찾지 못해 발생하는 예외:
-                // printLog("Failed to connect the server(UnknownHostException): " + e);
+                printLog("Failed to connect the server(UnknownHostException): " + e);
                 Log.e(TAG, "Failed to connect the server(UnknownHostException): " + e);
                 e.printStackTrace();
             } catch (IOException e) { //입출력 에러 발생 시 발생하는 예외:
-                // printLog("Failed to allocate the serverSocket: " + e);
+                printLog("Failed to allocate the serverSocket: " + e);
                 Log.e(TAG, "Failed to allocate the serverSocket: " + e);
                 e.printStackTrace();
             }
@@ -219,7 +218,7 @@ public class VideoCryptoActivity extends AppCompatActivity {
                 }*/
 
 
-                // printLog("Start the transmission.");
+                printLog("Start the transmission.");
                 Log.i(TAG, "Start the transmission.");
 
                 // 출력물 파일을 담을 File 형 변수 bufferFile 생성.
@@ -249,7 +248,7 @@ public class VideoCryptoActivity extends AppCompatActivity {
                     bufferOS.write(buffer, 0, numRead);
                     // 버퍼가 모두 채워지거나 close(), flush() 호출 → 버퍼의 모든 내용을 파일에 출력.
                     bufferOS.flush();
-                    // printLog("Current bytes length sent: " + numRead);
+                    printLog("Current bytes length sent: " + numRead);
 
                     dIo.write(buffer, 0, numRead);
                     dIo.flush();
@@ -265,118 +264,24 @@ public class VideoCryptoActivity extends AppCompatActivity {
                         break;
                     }
                 }
-                // printLog("The end of the loop.");
+                printLog("The end of the loop.");
                 Log.i(TAG, "The end of the loop.");
-                mBufferFile = bufferFile;
+
                 dIo.close();
             } catch (MalformedURLException e) {
-                // printLog("MalformedURLException: " + e);
+                printLog("MalformedURLException: " + e);
                 Log.e(TAG, "MalformedURLException: " + e);
                 e.printStackTrace();
             } catch (IOException e) {
-                // printLog("IOException: " + e);
+                printLog("IOException: " + e);
                 Log.e(TAG, "IOException: " + e);
                 e.printStackTrace();
             }
         });
     }
 
+    private void converToMediaFormat(){
 
-    private class ClientTask extends AsyncTask<Void, Void, Void> {
-        @Override
-        protected Void doInBackground(Void... voids) {
-            try {
-                // 소켓 생성.
-                // serverSocket = new Socket(ip, port);
-
-                DataOutputStream dIo = new DataOutputStream(serverSocket.getOutputStream());
-                new Thread(() -> {
-                    try {
-                        dIo.writeBoolean(true);
-                        dIo.flush();
-                        Log.i(TAG, "Flushed");
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    }
-                }).start();
-
-                DataInputStream dIs2;
-                Boolean flag = false;
-                while (flag == false) {
-                    Log.i(TAG, "FLAG ON: " + flag);
-                    try {
-                        dIs2 = new DataInputStream(serverSocket.getInputStream());
-                        Log.i(TAG, "fuck: " + dIs2);
-                        flag = dIs2.readBoolean();
-                        dIs2.close();
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    } finally {
-                        Log.i(TAG, "FLAG ON: " + flag);
-                    }
-                }
-
-
-                // printLog("Start the transmission.");
-                Log.i(TAG, "Start the transmission.");
-
-                // 출력물 파일을 담을 File 형 변수 bufferFile 생성.
-                File bufferFile = File.createTempFile(TAG, "mp4");
-
-                //
-                BufferedOutputStream bufferOS = new BufferedOutputStream(new FileOutputStream(bufferFile));
-
-                DataOutputStream outputStream = new DataOutputStream(serverSocket.getOutputStream());
-
-                // 선택된 파일을 InputStream 변수로 초기화.
-                InputStream is = getContentResolver().openInputStream(selectedFile);
-                // 생성자( 대상 InputStream, 버퍼의 크기 설정)
-                BufferedInputStream bIS = new BufferedInputStream(is, 2048);
-
-                // byte[] buffer = new byte[16384]; // == 2^14
-                byte[] buffer = new byte[8192]; // == 2^13
-                int numRead;
-                boolean started = false;
-
-                // 데이터의 다음 바이트를 반환하거나 파일 끝에 도달하면 -1을 반환.
-                while ((numRead = bIS.read(buffer)) != -1) {
-                    Log.i(TAG, "numRead: " + numRead);
-                    //Log.i(TAG, "numRead: "+numRead+", cnt: "+cnt);
-
-                    // buffer[offset(0)]부터 numRead만큼의 바이트를 bufferOS에 씀.
-                    bufferOS.write(buffer, 0, numRead);
-                    // 버퍼가 모두 채워지거나 close(), flush() 호출 → 버퍼의 모든 내용을 파일에 출력.
-                    bufferOS.flush();
-                    // printLog("Current bytes length sent: " + numRead);
-
-                    dIo.write(buffer, 0, numRead);
-                    dIo.flush();
-
-                    totalRead += numRead;
-
-                    if (totalRead >= totalSize && !started) {
-                        //setSourceAndStartPlay(bufferFile);
-                        Log.i(TAG, "numRead: " + numRead);
-                        Log.i(TAG, "totalRead: " + totalRead);
-                        Log.i(TAG, "BufferHIT:StartPlay");
-                        started = true;
-                        break;
-                    }
-                }
-                // printLog("The end of the loop.");
-                Log.i(TAG, "The end of the loop.");
-                mBufferFile = bufferFile;
-            } catch (MalformedURLException e) {
-                // printLog("MalformedURLException: " + e);
-                Log.e(TAG, "MalformedURLException: " + e);
-                e.printStackTrace();
-            } catch (IOException e) {
-                // printLog("IOException: " + e);
-                Log.e(TAG, "IOException: " + e);
-                e.printStackTrace();
-            }
-            return null;
-        }
     }
 
     @Override
@@ -396,7 +301,7 @@ public class VideoCryptoActivity extends AppCompatActivity {
                     file = getFile(getApplicationContext(), selectedFile);
                     fileDir = file.getAbsolutePath();
                 } catch (IOException e) {
-                    // printLog("Failed to set the file: " + e);
+                    printLog("Failed to set the file: " + e);
                     Log.e(TAG, "Failed to set the file: " + e);
                 }
 
