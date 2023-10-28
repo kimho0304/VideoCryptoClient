@@ -10,6 +10,9 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.SurfaceTexture;
 import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.AsyncTask;
@@ -21,14 +24,19 @@ import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.util.Log;
 import android.view.Menu;
+import android.view.Surface;
+import android.view.TextureView;
 import android.view.View;
+import android.widget.AdapterView;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.VideoView;
 
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.ActionBar;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.documentfile.provider.DocumentFile;
@@ -54,27 +62,36 @@ import java.net.MalformedURLException;
 import java.net.Socket;
 import java.net.UnknownHostException;
 
-public class VideoCryptoActivity extends AppCompatActivity {
+public class VideoCryptoActivity extends AppCompatActivity implements TextureView.SurfaceTextureListener, DecodingClass.PlayerFeedback {
     private static final String TAG = "VideoCryptoActivity_Debug";
-    private BroadcastReceiver permission = new com.example.videocrypto.UsbPermissionBroadcastReceiver();
+    private final BroadcastReceiver permission = new com.example.videocrypto.UsbPermissionBroadcastReceiver();
     private int portNum, deviceId, baudRate;
     private static final int REQ_CODE = 123; // startActivityForResult에 쓰일 사용자 정의 요청 코드
-    private Thread transport = null;
+    private final Thread transport = null;
     private Socket serverSocket;
+    private DataOutputStream clientDOS;
+    private DataOutputStream clientDOSFlag;
+    private long cnt = 0;
     public Uri selectedFile;
     long totalRead = 0;
     int totalSize = 0;
     private Handler mainHandler;
-    private String ip = "192.168.0.14";
-    private int port = 9090;
+    private static final int decodeCount = 0;
+    private boolean mShowStopLabel = false;
+    private DecodingClass.PlayTask mPlayTask;
+    private Surface surface = null;
+    private boolean mSurfaceTextureReady = false;
+    private String ip = null;
+    private final int port = 9090;
     private File file;
 
     // UI variables definition ↓
     private Button send_btn, select_file_btn, connectBtn;
-    private VideoView videoView;
+    private TextureView kl, videoView;
     private TextView directoryText, logText;
     private EditText ipText;
     private ScrollView logScrollView;
+    private boolean ready = false;
 
     @Override
     protected void onResume() { //화면에 나타나있고 실행 중일 때
@@ -100,15 +117,7 @@ public class VideoCryptoActivity extends AppCompatActivity {
         logScrollView = findViewById(R.id.logScrollView);
 
         videoView = findViewById(R.id.videoView);
-        videoView.setOnPreparedListener(new MediaPlayer.OnPreparedListener() { // 비디오 리스너 등록.
-            @Override
-            public void onPrepared(MediaPlayer mp) {
-                // 준비 완료되면 비디오 재생.
-                mp.setLooping(true); // 비디오 무한루프 설정: true.
-                mp.start(); // 비디오 재생 시작.
-                mp.setVolume(0f, 0f); // 소리 음소거.
-            }
-        });
+        videoView.setSurfaceTextureListener(this);
 
         directoryText = findViewById(R.id.fileDirectoryText);
         logText = findViewById(R.id.logText);
@@ -127,7 +136,7 @@ public class VideoCryptoActivity extends AppCompatActivity {
         );
 
         send_btn = findViewById(R.id.sendBtn); // 데이터 전송 버튼 등록.
-        send_btn.setOnClickListener(view -> transportThread().start());
+        send_btn.setOnClickListener(view -> clickPlayStop());
         // send_btn.setOnClickListener(view -> new ClientTask().execute());
     }
 
@@ -160,6 +169,8 @@ public class VideoCryptoActivity extends AppCompatActivity {
                         Log.i(TAG, String.valueOf(serverSocket.isConnected()));
                         InetAddress clientHost = serverSocket.getLocalAddress();
                         int clientPort = serverSocket.getPort();
+                        clientDOS = new DataOutputStream(serverSocket.getOutputStream());
+                        clientDOSFlag = new DataOutputStream(serverSocket.getOutputStream());
 
                         printLog("Connection Success.");
                         printLog("The Client is connected: " + clientHost + ":" + clientPort + ", host: " + clientHost.getHostName());
@@ -190,33 +201,16 @@ public class VideoCryptoActivity extends AppCompatActivity {
                 // 소켓 생성.
                 // serverSocket = new Socket(ip, port);
 
-                DataOutputStream dIo = new DataOutputStream(serverSocket.getOutputStream());
-                new Thread(() -> {
+                DataOutputStream clientDOS = new DataOutputStream(serverSocket.getOutputStream());
+                /*new Thread(() -> {
                     try {
-                        dIo.writeBoolean(true);
-                        dIo.flush();
+                        clientDOS.writeBoolean(true);
+                        clientDOS.flush();
                         Log.i(TAG, "Flushed");
                     } catch (IOException e) {
                         throw new RuntimeException(e);
                     }
-                }).start();
-
-                /*Thread.sleep(100);
-                DataInputStream dIs2 = new DataInputStream(serverSocket.getInputStream());
-                Boolean flag = false;
-                while (flag == false) {
-                    Log.i(TAG, "FLAG ON: " + flag);
-                    try {
-                        Log.i(TAG, "fuck: " + dIs2);
-                        flag = dIs2.readBoolean();
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    } finally {
-                        dIs2.close();
-                        Log.i(TAG, "FLAG ON: " + flag);
-                    }
-                }*/
-
+                }).start();*/
 
                 printLog("Start the transmission.");
                 Log.i(TAG, "Start the transmission.");
@@ -245,13 +239,13 @@ public class VideoCryptoActivity extends AppCompatActivity {
                     //Log.i(TAG, "numRead: "+numRead+", cnt: "+cnt);
 
                     // buffer[offset(0)]부터 numRead만큼의 바이트를 bufferOS에 씀.
-                    bufferOS.write(buffer, 0, numRead);
+                    outputStream.write(buffer, 0, numRead);
                     // 버퍼가 모두 채워지거나 close(), flush() 호출 → 버퍼의 모든 내용을 파일에 출력.
-                    bufferOS.flush();
+                    outputStream.flush();
                     printLog("Current bytes length sent: " + numRead);
 
-                    dIo.write(buffer, 0, numRead);
-                    dIo.flush();
+                    clientDOS.write(buffer, 0, numRead);
+                    clientDOS.flush();
 
                     totalRead += numRead;
 
@@ -267,7 +261,7 @@ public class VideoCryptoActivity extends AppCompatActivity {
                 printLog("The end of the loop.");
                 Log.i(TAG, "The end of the loop.");
 
-                dIo.close();
+                clientDOS.close();
             } catch (MalformedURLException e) {
                 printLog("MalformedURLException: " + e);
                 Log.e(TAG, "MalformedURLException: " + e);
@@ -280,8 +274,184 @@ public class VideoCryptoActivity extends AppCompatActivity {
         });
     }
 
-    private void converToMediaFormat(){
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) { //액션바 속 메뉴 설정
+        getMenuInflater().inflate(R.menu.menu, menu);
+        return true;
+    }
 
+    @Override
+    public void onSurfaceTextureAvailable(@NonNull SurfaceTexture surface, int width, int height) {
+        Log.d(TAG, "SurfaceTexture ready (" + width + "x" + height + ")");
+        mSurfaceTextureReady = true;
+        //updateControls();
+    }
+
+    @Override
+    public void onSurfaceTextureSizeChanged(@NonNull SurfaceTexture surface, int width, int height) {
+
+    }
+
+    @Override
+    public boolean onSurfaceTextureDestroyed(@NonNull SurfaceTexture surface) {
+        return false;
+    }
+
+    private Uri getImageUri(Context context, Bitmap inImage) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        inImage.compress(Bitmap.CompressFormat.PNG, 100, bytes);
+        File f = File.createTempFile("tmp", ".png");
+        //String path = MediaStore.Images.Media.insertImage(context.getContentResolver(), inImage, "Title", null);
+        return Uri.fromFile(f);
+        //return Uri.parse(path);
+    }
+
+    @Override
+    public void onSurfaceTextureUpdated(@NonNull SurfaceTexture surface) {
+        if (ready == true) {
+            new Thread(() -> {
+                try {
+                    Bitmap tmp = videoView.getBitmap();
+                    Uri bitmapToURI = getImageUri(getApplicationContext(), tmp);
+                    Log.i(TAG,"uri info: " + bitmapToURI.toString());
+                    //printLog("uri info: " + bitmapToURI.toString());
+                    //ByteArrayOutputStream stream = new ByteArrayOutputStream();
+                    //tmp.compress(Bitmap.CompressFormat.PNG, 100, stream);
+                    //byte[] compressdBuffer = stream.toByteArray();
+
+                    /*new Thread(() -> {
+                        try {
+                            clientDOS.writeBoolean(true);
+                            clientDOS.flush();
+                            Log.i(TAG, "Flushed");
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }).start();*/
+
+
+                    printLog("Start the transmission.");
+                    Log.i(TAG, "Start the transmission.");
+
+                    //clientDOS.write(buffer, 0, buffer.length);
+                    //clientDOS.flush();
+
+
+                    //DataOutputStream outputStream = new DataOutputStream(serverSocket.getOutputStream());
+
+                    // 선택된 파일을 InputStream 변수로 초기화.
+                    InputStream is = getContentResolver().openInputStream(bitmapToURI);
+                    // 생성자( 대상 InputStream, 버퍼의 크기 설정)
+                    BufferedInputStream bIS = new BufferedInputStream(is, 8192);
+                    /*clientDOS.write(compressdBuffer);
+                    Log.i(TAG, "compressdBuffer: " + compressdBuffer.length);
+                    printLog("compressdBuffer length: " + compressdBuffer.length + ", cnt: " + (++cnt));
+                    clientDOS.flush();*/
+
+                    // byte[] buffer = new byte[16384]; // == 2^14
+                    byte[] buffer = new byte[8192]; // == 2^13
+                    int numRead;
+                    boolean started = false;
+                    /*
+                    int f = bIS.read(buffer);
+                    Log.i(TAG, "f: " + f);
+                    */
+                    // 데이터의 다음 바이트를 반환하거나 파일 끝에 도달하면 -1을 반환.
+                    while ((numRead = bIS.read(buffer)) != -1) {
+                        Log.i(TAG, "numRead: " + numRead);
+                        //Log.i(TAG, "numRead: "+numRead+", cnt: "+cnt);
+
+                        // buffer[offset(0)]부터 numRead만큼의 바이트를 bufferOS에 씀.
+                        //outputStream.write(buffer, 0, numRead);
+                        // 버퍼가 모두 채워지거나 close(), flush() 호출 → 버퍼의 모든 내용을 파일에 출력.
+                        //outputStream.flush();
+                        printLog("Current bytes length sent: " + numRead);
+
+                        clientDOS.write(buffer, 0, numRead);
+                        clientDOS.flush();
+
+                        clientDOSFlag.writeBoolean(false);
+                        clientDOSFlag.flush();
+
+                        totalRead += numRead;
+
+                        if (totalRead >= totalSize && !started) {
+                            //setSourceAndStartPlay(bufferFile);
+                            Log.i(TAG, "numRead: " + numRead);
+                            Log.i(TAG, "totalRead: " + totalRead);
+                            break;
+                        }
+                    }
+                    clientDOSFlag.writeBoolean(true);
+                    clientDOSFlag.flush();
+                    printLog("The end of the loop.");
+                    Log.i(TAG, "The end of the loop.");
+
+                } catch (MalformedURLException e) {
+                    printLog("MalformedURLException: " + e);
+                    Log.e(TAG, "MalformedURLException: " + e);
+                    e.printStackTrace();
+                } catch (IOException e) {
+                    printLog("IOException: " + e);
+                    Log.e(TAG, "IOException: " + e);
+                    e.printStackTrace();
+                }
+            }).start();
+        }
+    }
+
+    @Override
+    public void playbackStopped() {
+        Log.d(TAG, "playback stopped");
+        mShowStopLabel = false;
+        mPlayTask = null;
+    }
+
+    private void stopPlayback() {
+        if (mPlayTask != null) {
+            mPlayTask.requestStop();
+        }
+    }
+
+    public void clickPlayStop() {
+        if (mShowStopLabel) {
+            Log.d(TAG, "stopping movie");
+            stopPlayback();
+            // Don't update the controls here -- let the task thread do it after the movie has
+            // actually stopped.
+            //mShowStopLabel = false;
+            //updateControls();
+        } else {
+            if (mPlayTask != null) {
+                Log.w(TAG, "movie already playing");
+                return;
+            }
+            Log.d(TAG, "starting movie");
+            SpeedControlCallback callback = new SpeedControlCallback();
+            /*if (((CheckBox) findViewById(R.id.locked60fps_checkbox)).isChecked()) {
+                // TODO: consider changing this to be "free running" mode
+                callback.setFixedPlaybackRate(60);
+            }*/
+            SurfaceTexture st = videoView.getSurfaceTexture();
+            surface = new Surface(st);
+            DecodingClass player = null;
+            try {
+                player = new DecodingClass(
+                        file, surface, callback);
+            } catch (IOException ioe) {
+                Log.e(TAG, "Unable to play movie", ioe);
+                surface.release();
+                return;
+            }
+            // adjustAspectRatio(player.getVideoWidth(), player.getVideoHeight());
+
+            mPlayTask = new DecodingClass.PlayTask(player, this);
+
+            mShowStopLabel = true;
+            //updateControls();
+            mPlayTask.execute();
+            ready = true;
+        }
     }
 
     @Override
@@ -308,12 +478,6 @@ public class VideoCryptoActivity extends AppCompatActivity {
                 directoryText.setText(fileDir); // fileName의 경로를 directoryText에 할당.
                 totalSize = Integer.parseInt(getRealSizeFromUri(this, selectedFile));
                 Log.i(TAG, "size: " + totalSize);
-
-                videoView.setVideoPath(file.getAbsolutePath());
-                // videoView.start();
-
-
-                // transportThread(selectedFile);
             }
         }
     }
@@ -378,11 +542,5 @@ public class VideoCryptoActivity extends AppCompatActivity {
 
         String[] result = name.split("\\."); // '.'을 기준으로 확장명 분리 ex) ".txt"
         return result[0];
-    }
-
-    @Override
-    public boolean onCreateOptionsMenu(Menu menu) { //액션바 속 메뉴 설정
-        getMenuInflater().inflate(R.menu.menu, menu);
-        return true;
     }
 }
