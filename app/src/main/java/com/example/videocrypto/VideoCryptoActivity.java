@@ -11,6 +11,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.database.Cursor;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.SurfaceTexture;
 import android.media.MediaPlayer;
@@ -56,7 +57,10 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.io.OutputStream;
+import java.io.Serializable;
 import java.net.InetAddress;
 import java.net.MalformedURLException;
 import java.net.Socket;
@@ -64,12 +68,14 @@ import java.net.UnknownHostException;
 
 public class VideoCryptoActivity extends AppCompatActivity implements TextureView.SurfaceTextureListener, DecodingClass.PlayerFeedback {
     private static final String TAG = "VideoCryptoActivity_Debug";
+    private static int sendCnt = 0;
     private final BroadcastReceiver permission = new com.example.videocrypto.UsbPermissionBroadcastReceiver();
     private int portNum, deviceId, baudRate;
     private static final int REQ_CODE = 123; // startActivityForResult에 쓰일 사용자 정의 요청 코드
     private final Thread transport = null;
     private Socket serverSocket;
-    private DataOutputStream clientDOS;
+    private OutputStream clientOS;
+    private ObjectOutputStream clientDOS;
     private DataOutputStream clientDOSFlag;
     private long cnt = 0;
     public Uri selectedFile;
@@ -169,8 +175,10 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
                         Log.i(TAG, String.valueOf(serverSocket.isConnected()));
                         InetAddress clientHost = serverSocket.getLocalAddress();
                         int clientPort = serverSocket.getPort();
-                        clientDOS = new DataOutputStream(serverSocket.getOutputStream());
-                        clientDOSFlag = new DataOutputStream(serverSocket.getOutputStream());
+
+                        clientOS = serverSocket.getOutputStream();
+                        clientDOS = new ObjectOutputStream(clientOS);
+                        //clientDOSFlag = new DataOutputStream(serverSocket.getOutputStream());
 
                         printLog("Connection Success.");
                         printLog("The Client is connected: " + clientHost + ":" + clientPort + ", host: " + clientHost.getHostName());
@@ -297,106 +305,67 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
         return false;
     }
 
-    private Uri getImageUri(Context context, Bitmap inImage) throws IOException {
-        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        inImage.compress(Bitmap.CompressFormat.PNG, 100, bytes);
-        File f = File.createTempFile("tmp", ".png");
-        //String path = MediaStore.Images.Media.insertImage(context.getContentResolver(), inImage, "Title", null);
-        return Uri.fromFile(f);
-        //return Uri.parse(path);
-    }
-
     @Override
     public void onSurfaceTextureUpdated(@NonNull SurfaceTexture surface) {
         if (ready == true) {
-            new Thread(() -> {
-                try {
-                    Bitmap tmp = videoView.getBitmap();
-                    Uri bitmapToURI = getImageUri(getApplicationContext(), tmp);
-                    Log.i(TAG,"uri info: " + bitmapToURI.toString());
-                    //printLog("uri info: " + bitmapToURI.toString());
-                    //ByteArrayOutputStream stream = new ByteArrayOutputStream();
-                    //tmp.compress(Bitmap.CompressFormat.PNG, 100, stream);
-                    //byte[] compressdBuffer = stream.toByteArray();
+            sendData task = new sendData();
+            task.execute();
+        }
+    }
 
-                    /*new Thread(() -> {
-                        try {
-                            clientDOS.writeBoolean(true);
-                            clientDOS.flush();
-                            Log.i(TAG, "Flushed");
-                        } catch (IOException e) {
-                            throw new RuntimeException(e);
-                        }
-                    }).start();*/
+    private class sendData extends AsyncTask<Void, Void, Void> {
+        @Override
+        protected Void doInBackground(Void... voids) {
+            try {
+                Bitmap tmp = videoView.getBitmap();
+                BitmapDataObject bitmapObject = new BitmapDataObject(tmp);
+                //Uri bitmapToURI = getImageUri(getApplicationContext(), tmp);
+                //Log.i(TAG,"uri info: " + bitmapToURI.toString());
 
+                printLog("Start the transmission.");
+                Log.i(TAG, "Start the transmission.");
 
-                    printLog("Start the transmission.");
-                    Log.i(TAG, "Start the transmission.");
+                //clientDOS.defaultWriteObject();
+                byte[] serializedBitmap = bitmapObject.compressBitmap();
+                //clientDOS.writeInt(serializedBitmap.length);
+                clientDOS.writeObject(serializedBitmap);
+                clientDOS.flush();
 
-                    //clientDOS.write(buffer, 0, buffer.length);
-                    //clientDOS.flush();
+                printLog("The end of the send: " + (++sendCnt));
+                Log.i(TAG, "The end of the send: " + sendCnt);
+            } catch (MalformedURLException e) {
+                printLog("MalformedURLException: " + e);
+                Log.e(TAG, "MalformedURLException: " + e);
+                e.printStackTrace();
+            } catch (IOException e) {
+                printLog("IOException: " + e);
+                Log.e(TAG, "IOException: " + e);
+                e.printStackTrace();
+            }
 
+            return null;
+        }
 
-                    //DataOutputStream outputStream = new DataOutputStream(serverSocket.getOutputStream());
+        @Override
+        protected void onProgressUpdate(java.lang.Void... values) {
+            super.onProgressUpdate(values);
+        }
+    }
 
-                    // 선택된 파일을 InputStream 변수로 초기화.
-                    InputStream is = getContentResolver().openInputStream(bitmapToURI);
-                    // 생성자( 대상 InputStream, 버퍼의 크기 설정)
-                    BufferedInputStream bIS = new BufferedInputStream(is, 8192);
-                    /*clientDOS.write(compressdBuffer);
-                    Log.i(TAG, "compressdBuffer: " + compressdBuffer.length);
-                    printLog("compressdBuffer length: " + compressdBuffer.length + ", cnt: " + (++cnt));
-                    clientDOS.flush();*/
+    // https://github.com/rantibi/MyFirstApp/blob/master/src/com/sharedpaint/serializables/SerializableBitmap.java
+    public class BitmapDataObject implements Serializable {
 
-                    // byte[] buffer = new byte[16384]; // == 2^14
-                    byte[] buffer = new byte[8192]; // == 2^13
-                    int numRead;
-                    boolean started = false;
-                    /*
-                    int f = bIS.read(buffer);
-                    Log.i(TAG, "f: " + f);
-                    */
-                    // 데이터의 다음 바이트를 반환하거나 파일 끝에 도달하면 -1을 반환.
-                    while ((numRead = bIS.read(buffer)) != -1) {
-                        Log.i(TAG, "numRead: " + numRead);
-                        //Log.i(TAG, "numRead: "+numRead+", cnt: "+cnt);
+        private Bitmap currentImage;
 
-                        // buffer[offset(0)]부터 numRead만큼의 바이트를 bufferOS에 씀.
-                        //outputStream.write(buffer, 0, numRead);
-                        // 버퍼가 모두 채워지거나 close(), flush() 호출 → 버퍼의 모든 내용을 파일에 출력.
-                        //outputStream.flush();
-                        printLog("Current bytes length sent: " + numRead);
+        public BitmapDataObject(Bitmap bitmap) {
+            currentImage = bitmap;
+        }
 
-                        clientDOS.write(buffer, 0, numRead);
-                        clientDOS.flush();
-
-                        clientDOSFlag.writeBoolean(false);
-                        clientDOSFlag.flush();
-
-                        totalRead += numRead;
-
-                        if (totalRead >= totalSize && !started) {
-                            //setSourceAndStartPlay(bufferFile);
-                            Log.i(TAG, "numRead: " + numRead);
-                            Log.i(TAG, "totalRead: " + totalRead);
-                            break;
-                        }
-                    }
-                    clientDOSFlag.writeBoolean(true);
-                    clientDOSFlag.flush();
-                    printLog("The end of the loop.");
-                    Log.i(TAG, "The end of the loop.");
-
-                } catch (MalformedURLException e) {
-                    printLog("MalformedURLException: " + e);
-                    Log.e(TAG, "MalformedURLException: " + e);
-                    e.printStackTrace();
-                } catch (IOException e) {
-                    printLog("IOException: " + e);
-                    Log.e(TAG, "IOException: " + e);
-                    e.printStackTrace();
-                }
-            }).start();
+        private byte[] compressBitmap() throws IOException {
+            ByteArrayOutputStream stream = new ByteArrayOutputStream();
+            currentImage.compress(Bitmap.CompressFormat.PNG, 100, stream);
+            byte[] byteArray = stream.toByteArray();
+            return byteArray;
         }
     }
 
@@ -480,6 +449,16 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
                 Log.i(TAG, "size: " + totalSize);
             }
         }
+    }
+
+    private Uri getImageUri(Context context, Bitmap inImage) throws IOException {
+        File f = File.createTempFile("tmp", ".png");
+        OutputStream os = new FileOutputStream(f);
+        inImage.compress(Bitmap.CompressFormat.PNG, 100, os);
+        os.close();
+        //String path = MediaStore.Images.Media.insertImage(context.getContentResolver(), inImage, "Title", null);
+        return Uri.fromFile(f);
+        //return Uri.parse(path);
     }
 
     public static File getFile(Context context, Uri uri) throws IOException {
