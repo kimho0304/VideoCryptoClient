@@ -1,23 +1,15 @@
 package com.example.videocrypto;
 
-import static androidx.documentfile.provider.DocumentFile.fromSingleUri;
-
 import android.app.Activity;
-import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.database.Cursor;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
 import android.graphics.SurfaceTexture;
-import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.AsyncTask;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -28,36 +20,21 @@ import android.view.Menu;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
-import android.widget.AdapterView;
 import android.widget.Button;
-import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
-import android.widget.VideoView;
 
 import androidx.annotation.NonNull;
-import androidx.appcompat.app.ActionBar;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.documentfile.provider.DocumentFile;
 
-import org.w3c.dom.Text;
-
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
-import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
-import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
 import java.io.Serializable;
@@ -202,86 +179,6 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
         });
     }
 
-    // 데이터 실시간 전송 스레드 정의.
-    protected Thread transportThread() {
-        return new Thread(() -> {
-            try {
-                // 소켓 생성.
-                // serverSocket = new Socket(ip, port);
-
-                DataOutputStream clientDOS = new DataOutputStream(serverSocket.getOutputStream());
-                /*new Thread(() -> {
-                    try {
-                        clientDOS.writeBoolean(true);
-                        clientDOS.flush();
-                        Log.i(TAG, "Flushed");
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    }
-                }).start();*/
-
-                printLog("Start the transmission.");
-                Log.i(TAG, "Start the transmission.");
-
-                // 출력물 파일을 담을 File 형 변수 bufferFile 생성.
-                File bufferFile = File.createTempFile(TAG, "mp4");
-
-                //
-                BufferedOutputStream bufferOS = new BufferedOutputStream(new FileOutputStream(bufferFile));
-
-                DataOutputStream outputStream = new DataOutputStream(serverSocket.getOutputStream());
-
-                // 선택된 파일을 InputStream 변수로 초기화.
-                InputStream is = getContentResolver().openInputStream(selectedFile);
-                // 생성자( 대상 InputStream, 버퍼의 크기 설정)
-                BufferedInputStream bIS = new BufferedInputStream(is, 2048);
-
-                // byte[] buffer = new byte[16384]; // == 2^14
-                byte[] buffer = new byte[8192]; // == 2^13
-                int numRead;
-                boolean started = false;
-
-                // 데이터의 다음 바이트를 반환하거나 파일 끝에 도달하면 -1을 반환.
-                while ((numRead = bIS.read(buffer)) != -1) {
-                    Log.i(TAG, "numRead: " + numRead);
-                    //Log.i(TAG, "numRead: "+numRead+", cnt: "+cnt);
-
-                    // buffer[offset(0)]부터 numRead만큼의 바이트를 bufferOS에 씀.
-                    outputStream.write(buffer, 0, numRead);
-                    // 버퍼가 모두 채워지거나 close(), flush() 호출 → 버퍼의 모든 내용을 파일에 출력.
-                    outputStream.flush();
-                    printLog("Current bytes length sent: " + numRead);
-
-                    clientDOS.write(buffer, 0, numRead);
-                    clientDOS.flush();
-
-                    totalRead += numRead;
-
-                    if (totalRead >= totalSize && !started) {
-                        //setSourceAndStartPlay(bufferFile);
-                        Log.i(TAG, "numRead: " + numRead);
-                        Log.i(TAG, "totalRead: " + totalRead);
-                        Log.i(TAG, "BufferHIT:StartPlay");
-                        started = true;
-                        break;
-                    }
-                }
-                printLog("The end of the loop.");
-                Log.i(TAG, "The end of the loop.");
-
-                clientDOS.close();
-            } catch (MalformedURLException e) {
-                printLog("MalformedURLException: " + e);
-                Log.e(TAG, "MalformedURLException: " + e);
-                e.printStackTrace();
-            } catch (IOException e) {
-                printLog("IOException: " + e);
-                Log.e(TAG, "IOException: " + e);
-                e.printStackTrace();
-            }
-        });
-    }
-
     @Override
     public boolean onCreateOptionsMenu(Menu menu) { //액션바 속 메뉴 설정
         getMenuInflater().inflate(R.menu.menu, menu);
@@ -313,26 +210,27 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
         }
     }
 
-    private class sendData extends AsyncTask<Void, Void, Void> {
+    private class sendData extends AsyncTask<Void, Void, Boolean> {
         @Override
-        protected Void doInBackground(Void... voids) {
+        protected Boolean doInBackground(Void... voids) {
             try {
                 Bitmap tmp = videoView.getBitmap();
                 BitmapDataObject bitmapObject = new BitmapDataObject(tmp);
                 //Uri bitmapToURI = getImageUri(getApplicationContext(), tmp);
                 //Log.i(TAG,"uri info: " + bitmapToURI.toString());
 
-                printLog("Start the transmission.");
-                Log.i(TAG, "Start the transmission.");
+                //printLog("Start the transmission.");
+               // Log.i(TAG, "Start the transmission.");
 
                 //clientDOS.defaultWriteObject();
                 byte[] serializedBitmap = bitmapObject.compressBitmap();
+                Log.i(TAG, "Start the transmission: " + serializedBitmap.length);
                 //clientDOS.writeInt(serializedBitmap.length);
                 clientDOS.writeObject(serializedBitmap);
                 clientDOS.flush();
 
-                printLog("The end of the send: " + (++sendCnt));
-                Log.i(TAG, "The end of the send: " + sendCnt);
+                Log.i(TAG, "The end of the send: " + (++sendCnt));
+                //printLog("The end of the send: " + (++sendCnt));
             } catch (MalformedURLException e) {
                 printLog("MalformedURLException: " + e);
                 Log.e(TAG, "MalformedURLException: " + e);
@@ -347,9 +245,14 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
         }
 
         @Override
+        protected void onPostExecute(Boolean result){
+            Log.i(TAG, "Current Async status: " + this.getStatus().toString());
+        }
+
+        /*@Override
         protected void onProgressUpdate(java.lang.Void... values) {
             super.onProgressUpdate(values);
-        }
+        }*/
     }
 
     // https://github.com/rantibi/MyFirstApp/blob/master/src/com/sharedpaint/serializables/SerializableBitmap.java
@@ -364,7 +267,20 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
         private byte[] compressBitmap() throws IOException {
             ByteArrayOutputStream stream = new ByteArrayOutputStream();
             currentImage.compress(Bitmap.CompressFormat.PNG, 100, stream);
-            byte[] byteArray = stream.toByteArray();
+            byte[] byteArray = stream.toByteArray();OutputStream os = null;
+
+            /*boolean f = false;
+            try {
+                File tmpBitmap = File.createTempFile("example", ".png");
+                os = new FileOutputStream(tmpBitmap);
+                f = currentImage.compress(Bitmap.CompressFormat.PNG, 100, os);
+            }catch (NullPointerException e){
+                e.printStackTrace();
+            }
+            if(f) {
+                os.flush();
+                os.close();
+            }*/
             return byteArray;
         }
     }

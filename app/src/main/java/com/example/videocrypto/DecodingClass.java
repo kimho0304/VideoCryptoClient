@@ -1,6 +1,9 @@
 package com.example.videocrypto;
 
 import android.app.Activity;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.icu.util.Output;
 import android.media.MediaCodec;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
@@ -10,9 +13,12 @@ import android.util.Log;
 import android.util.Size;
 import android.view.Surface;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
@@ -305,7 +311,7 @@ public class DecodingClass extends Activity {
      * Work loop.  We execute here until we run out of video or are told to stop.
      */
     private void doExtract(MediaExtractor extractor, int trackIndex, MediaCodec decoder,
-                           FrameCallback frameCallback) {
+                           FrameCallback frameCallback) throws IOException {
         // We need to strike a balance between providing input and reading output that
         // operates efficiently without delays on the output side.
         //
@@ -411,15 +417,17 @@ public class DecodingClass extends Activity {
 
                         int l = payload.length;
 
-                        if (chunkSize == -1) {
+                        /*if (chunkSize == -1) {
                             for (int i = 0; i < 10; i++)
                                 Log.i("DecodingClass_Payload", "FUCK: " + payload[0]);
-                        }
+                        }*/
                         Log.i("DecodingClass_Payload", "Cur: " + (inputChunk + 1) + ", len: " + l);
                         Log.i("DecodingClass_Payload", "ChunkSize: " + chunkSize);
 
                         decoder.queueInputBuffer(inputBufIndex, 0, chunkSize,
                                 presentationTimeUs, flag /*flags*/);
+
+                        //printLog("resultBitmap is null?: " + (Boolean)(resultBitmap == null));
                         if (VERBOSE) {
                             Log.d(TAG, "submitted frame " + inputChunk + " to dec, size=" +
                                     chunkSize);
