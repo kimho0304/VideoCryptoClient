@@ -11,10 +11,10 @@ import android.graphics.SurfaceTexture;
 import android.media.MediaMetadataRetriever;
 import android.media.MediaPlayer;
 import android.net.Uri;
-import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Message;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.util.Log;
@@ -32,6 +32,8 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.example.videocrypto.util.ExtractBitmaps;
+
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.File;
@@ -45,45 +47,43 @@ import java.net.InetAddress;
 import java.net.MalformedURLException;
 import java.net.Socket;
 import java.net.UnknownHostException;
+import java.util.ArrayList;
 
-public class VideoCryptoActivity extends AppCompatActivity implements TextureView.SurfaceTextureListener, DecodingClass.PlayerFeedback{
+public class VideoCryptoActivity extends AppCompatActivity implements TextureView.SurfaceTextureListener, DecodingClass.PlayerFeedback, ExtractBitmaps.SendFramesCallback {
     private static final String TAG = "VideoCryptoActivity_Debug";
-    private static int sendCnt = 0;
-    private final BroadcastReceiver permission = new com.example.videocrypto.UsbPermissionBroadcastReceiver();
+    public static int MAX_FRAMES = -1;
     private int portNum, deviceId, baudRate;
     private static final int REQ_CODE = 123; // startActivityForResult에 쓰일 사용자 정의 요청 코드
-    private final Thread transport = null;
     private Socket serverSocket;
     private OutputStream clientOS;
     private ObjectOutputStream clientDOS;
     private DataOutputStream clientDOSFlag;
-    private long cnt = 0;
+    private final long cnt = 0;
     public Uri selectedFile;
-    long totalRead = 0;
     int totalSize = 0;
-    private Handler mainHandler;
-    private static final int decodeCount = 0;
+    private static Handler mainHandler;
     private boolean mShowStopLabel = false;
     private DecodingClass.PlayTask mPlayTask;
-    private Surface surface = null;
-    private boolean mSurfaceTextureReady = false;
+    private final Surface surface = null;
+    private final boolean mSurfaceTextureReady = false;
     private String ip = null;
     private final int port = 9090;
     private File file;
     private int videoWidth, videoHeight;
-    private long videoLength;
 
     // UI variables definition ↓
     private Button send_btn, select_file_btn, connectBtn;
     private TextureView textureView;
     private MediaPlayer mediaPlayer;
-    private MediaMetadataRetriever mmr;
     private TextView directoryText, logText;
     private EditText ipText;
     private ScrollView logScrollView;
     private Switch isLoopingSet;
     private boolean ready = false;
     private boolean isLoop = false;
+    public static ArrayList<Bitmap> decodedFrames = new ArrayList<>();
+    public static int curInx = 0;
+    private ExtractBitmaps extractor;
 
     @Override
     protected void onResume() { //화면에 나타나있고 실행 중일 때
@@ -110,7 +110,6 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
         logScrollView = findViewById(R.id.logScrollView);
 
         textureView = findViewById(R.id.videoView);
-        textureView.setVisibility(View.VISIBLE);
         textureView.setSurfaceTextureListener(this);
 
         /*if (mediaPlayer == null) {
@@ -129,10 +128,7 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
         ipText = findViewById(R.id.ipText);
         isLoopingSet = findViewById(R.id.isLooping);
         isLoopingSet.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            if(isChecked)
-                isLoop = true;
-            else
-                isLoop = false;
+            isLoop = isChecked;
         });
 
         connectBtn = findViewById(R.id.connectBtn);
@@ -149,31 +145,38 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
 
         send_btn = findViewById(R.id.sendBtn); // 데이터 전송 버튼 등록.
         send_btn.setOnClickListener(view -> {
-            textureView.getLayoutParams().width = videoWidth;
-            textureView.getLayoutParams().height = videoHeight;
+            textureView.getLayoutParams().width = 720;
+            textureView.getLayoutParams().height = 1280;
 
             Log.i(TAG, "Changed size of surface: " + textureView.getLayoutParams().width + ", " + textureView.getLayoutParams().height);
 
-            try{
+            try {
                 //Log.i(TAG, "mediaPlayer path set: " + fileDir);
                 mediaPlayer.prepareAsync();
                 Log.i(TAG, "prepareAsync called.");
 
-                videoLength = Long.parseLong(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT));
-                Log.e(TAG, String.valueOf(videoLength));
                 ready = true;
                 mediaPlayer.setOnPreparedListener(mp -> {
                     mediaPlayer.setLooping(isLoop);
                     mediaPlayer.start();
                 });
 
-                mediaPlayer.setOnCompletionListener(mp->{
+                mediaPlayer.setOnCompletionListener(mp -> {
                     mediaPlayer.reset();
                     //mediaPlayer.prepareAsync();
                 });
 
-                sendData task = new sendData();
-                task.execute();
+                extractor = new ExtractBitmaps(this);
+                ExtractBitmaps.inputFile = file;
+                try {
+                    extractor.testExtractMpegFrames();
+                } catch (Throwable e) {
+                    Log.e(TAG, "Failed to run ExtractBimap: " + e);
+                    e.printStackTrace();
+                }
+
+                //SendFrames sendThread = new SendFrames();
+                //sendThread.run();
             } catch (Exception e) {
                 //Log.e(TAG, "surface view error : " + e.getMessage());
                 e.printStackTrace();
@@ -194,8 +197,7 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
             int delta = logScrollView.getBottom() - logScrollView.getScrollY() - logScrollView.getScrollX();
             logScrollView.smoothScrollBy(0, delta);
         });
-
-        logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
+        // logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
     }
 
     protected Thread isServerOnline() { // isReachable 메소드를 통해, 소켓 통신 전에 서버에 접속할 수 있는지, 즉 서버가 열려 있는지를 확인하려고 생성한 함수.
@@ -266,28 +268,59 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
         //Log.d(TAG, "updating . . .");
     }
 
-    private class sendData extends AsyncTask<Void, Void, Boolean> {
+    @Override
+    public void sendFrames(Bitmap bmp, int inx) {
+        new Thread(()->{
+            Log.i(TAG, "sendFrames called.");
+            try {
+                BitmapDataObject bitmapObject = new BitmapDataObject(bmp);
+                byte[] serializedBitmap = bitmapObject.compressBitmap();
+                Log.i(TAG, "Start the transmission: " + serializedBitmap.length);
+
+                clientDOS.writeObject(serializedBitmap);
+                clientDOS.flush();
+            } catch (MalformedURLException e) {
+                printLog("MalformedURLException: " + e);
+                Log.e(TAG, "MalformedURLException: " + e);
+                e.printStackTrace();
+            } catch (IOException e) {
+                printLog("IOException: " + e);
+                Log.e(TAG, "IOException: " + e);
+                e.printStackTrace();
+            }
+        }).start();
+    }
+
+    private class ExtractFrames implements Runnable {
         @Override
-        protected Boolean doInBackground(Void... voids) {
-            //textureView.buildDrawingCache(true);
-            Log.i(TAG, "duration: " + videoLength);
-            for(int i = 0; i < videoLength; i++){
+        public void run() {
+            ExtractBitmaps.inputFile = file;
+            try {
+                extractor.testExtractMpegFrames();
+            } catch (Throwable e) {
+                Log.e(TAG, "Failed to run ExtractBimap: " + e);
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private class SendFrames implements Runnable{
+        @Override
+        public void run() {
+            if (!ExtractBitmaps.decodeCountFlag) {
+                while (true) {
+                    // Log.i(TAG, "Looping");
+                    if (ExtractBitmaps.decodeCountFlag)
+                        break;
+                }
+            }
+
+            Log.i(TAG, "ExtractBitmaps.decodeCountFlag has been true now.");
+            while (curInx < ExtractBitmaps.MAX_FRAMES) {
+                Log.i(TAG, "curInx looping.");
                 try {
-                    // Bitmap tmp = textureView.getBitmap();
-                    //Bitmap tmp = textureView.getBitmap(videoWidth, videoHeight);
-                    Bitmap tmp = null;
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P)
-                        tmp = mmr.getFrameAtIndex(i);
-                    Log.i(TAG, "is Bitmap null?: " + (Boolean)(tmp == null));
-                    Log.i(TAG, "getCurrentPosition value: " + i);
+                    Bitmap tmp = decodedFrames.get(curInx);
                     BitmapDataObject bitmapObject = new BitmapDataObject(tmp);
-                    //Uri bitmapToURI = getImageUri(getApplicationContext(), tmp);
-                    //Log.i(TAG,"uri info: " + bitmapToURI.toString());
-
-                    //printLog("Start the transmission.");
-                    // Log.i(TAG, "Start the transmission.");
-
-                    //clientDOS.defaultWriteObject();
                     byte[] serializedBitmap = bitmapObject.compressBitmap();
                     Log.i(TAG, "Start the transmission: " + serializedBitmap.length);
                     //clientDOS.writeInt(serializedBitmap.length);
@@ -304,27 +337,17 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
                     printLog("IOException: " + e);
                     Log.e(TAG, "IOException: " + e);
                     e.printStackTrace();
+                } catch (Throwable e) {
+                    throw new RuntimeException(e);
                 }
             }
-
-            return null;
         }
-
-        @Override
-        protected void onPostExecute(Boolean result) {
-            Log.i(TAG, "Current Async status: " + this.getStatus().toString());
-        }
-
-        /*@Override
-        protected void onProgressUpdate(java.lang.Void... values) {
-            super.onProgressUpdate(values);
-        }*/
     }
 
     // https://github.com/rantibi/MyFirstApp/blob/master/src/com/sharedpaint/serializables/SerializableBitmap.java
     public class BitmapDataObject implements Serializable {
 
-        private Bitmap currentImage;
+        private final Bitmap currentImage;
 
         public BitmapDataObject(Bitmap bitmap) {
             currentImage = bitmap;
@@ -334,20 +357,21 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
             ByteArrayOutputStream stream = new ByteArrayOutputStream();
             currentImage.compress(Bitmap.CompressFormat.PNG, 100, stream);
             byte[] byteArray = stream.toByteArray();
-            OutputStream os = null;
+
+            /*OutputStream os = null;
 
             boolean f = false;
             try {
                 File tmpBitmap = File.createTempFile("texture", ".png");
                 os = new FileOutputStream(tmpBitmap);
                 f = currentImage.compress(Bitmap.CompressFormat.PNG, 100, os);
-            }catch (NullPointerException e){
+            } catch (NullPointerException e) {
                 e.printStackTrace();
             }
-            if(f) {
+            if (f) {
                 os.flush();
                 os.close();
-            }
+            }*/
             return byteArray;
         }
     }
@@ -386,20 +410,19 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
                     Log.e(TAG, "Failed to set the file: " + e);
                 }
 
-                MediaMetadataRetriever mMR = new MediaMetadataRetriever();
-                mMR.setDataSource(fileDir);
-                videoWidth = mMR.getFrameAtTime().getWidth();
-                videoHeight = mMR.getFrameAtTime().getHeight();
                 Log.i(TAG, "The size of video: " + videoWidth + ", " + videoHeight);
 
                 directoryText.setText(fileDir); // fileName의 경로를 directoryText에 할당.
                 totalSize = Integer.parseInt(getRealSizeFromUri(this, selectedFile));
                 Log.i(TAG, "size: " + totalSize);
 
+                MediaMetadataRetriever mmr = new MediaMetadataRetriever();
+                mmr.setDataSource(fileDir);
+                MAX_FRAMES = Integer.parseInt(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT));
+                Log.i(TAG, "MAX_FRAMES: " + MAX_FRAMES);
+
                 try {
                     mediaPlayer.setDataSource(fileDir);
-                    mmr = new MediaMetadataRetriever();
-                    mmr.setDataSource(fileDir);
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
