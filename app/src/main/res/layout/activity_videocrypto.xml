@@ -19,7 +19,7 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent">
 
-        <TextureView
+        <VideoView
             android:id="@+id/videoView"
             android:layout_width="720px"
             android:layout_height="1280px"

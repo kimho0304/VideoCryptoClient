@@ -16,6 +16,9 @@ package com.example.videocrypto.util;
  * limitations under the License.
  */
 
+import static com.example.videocrypto.VideoCryptoActivity.curInx;
+import static com.example.videocrypto.VideoCryptoActivity.decodedFrames;
+
 import android.graphics.Bitmap;
 import android.graphics.SurfaceTexture;
 import android.media.MediaCodec;
@@ -31,6 +34,7 @@ import android.opengl.GLES20;
 import android.opengl.Matrix;
 import android.os.Environment;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.Message;
 import android.util.Log;
 import android.view.Surface;
@@ -61,8 +65,8 @@ import java.nio.FloatBuffer;
  * (This was derived from bits and pieces of CTS tests, and is packaged as such, but is not
  * currently part of CTS.)
  */
-public class ExtractBitmaps extends AndroidTestCase {
-    private static final String TAG = "ExtractBitmaps";
+public class ExtractBitmaps{
+    private static final String TAG = "ExtractBitmaps_Debug";
     public static boolean decodeCountFlag = false;
     private static final boolean VERBOSE = true;           // lots of logging
 
@@ -72,15 +76,13 @@ public class ExtractBitmaps extends AndroidTestCase {
     public static int MAX_FRAMES = -1;       // stop extracting after this many
     public static File inputFile = null;
     public static int decodeCount = 0;
-    public static SendFramesCallback mSendFramesCallback;
+    private static int FRAME_SENT = 0;
 
-    public interface SendFramesCallback {
-        void sendFrames(Bitmap bmp, int inx);
-    }
+    public static Handler mainHandler;
+    private static SendFramesCallback mSendFramesCallback;
 
     public ExtractBitmaps(SendFramesCallback mSendFramesCallback){
         this.mSendFramesCallback = mSendFramesCallback;
-        Log.d(TAG, "mSendFramesCallback Info: " + mSendFramesCallback.getClass());
     }
 
     /** test entry point */
@@ -89,7 +91,7 @@ public class ExtractBitmaps extends AndroidTestCase {
         ExtractMpegFramesWrapper.runTest(this);
     }
 
-    /**
+    /*
      * Wraps extractMpegFrames().  This is necessary because SurfaceTexture will try to use
      * the looper in the current thread if one exists, and the CTS tests create one on the
      * test thread.
@@ -113,7 +115,7 @@ public class ExtractBitmaps extends AndroidTestCase {
             }
         }
 
-        /** Entry point. */
+        //** Entry point. *//*
         public static void runTest(ExtractBitmaps obj) throws Throwable {
             ExtractMpegFramesWrapper wrapper = new ExtractMpegFramesWrapper(obj);
             Thread th = new Thread(wrapper, "codec test");
@@ -133,12 +135,24 @@ public class ExtractBitmaps extends AndroidTestCase {
      * it by adjusting the GL viewport to get letterboxing or pillarboxing, but generally if
      * you're extracting frames you don't want black bars.
      */
-    private void extractMpegFrames() throws IOException {
+    public void extractMpegFrames() throws IOException {
         MediaCodec decoder = null;
         CodecOutputSurface outputSurface = null;
         MediaExtractor extractor = null;
         int saveWidth = 720;
         int saveHeight = 1280;
+
+        /*new Thread(()->{}
+        ).start();
+        mainHandler = new Handler(){
+            @Override
+            public void handleMessage(Message msg){
+                if(msg.what == FRAME_SENT){
+
+                }else{
+                }
+            }
+        };*/
 
         try {
             File file = inputFile;  // must be an absolute path
@@ -313,17 +327,17 @@ public class ExtractBitmaps extends AndroidTestCase {
                     if (doRender) {
                         if (VERBOSE) Log.d(TAG, "awaiting decode of frame " + decodeCount);
 
-                        outputSurface.drawImage(true);
                         outputSurface.awaitNewImage();
+                        outputSurface.drawImage(true);
 
                         if (decodeCount < MAX_FRAMES) {
                             //File outputFile = new File(FILES_DIR, String.format("frame-%02d.png", decodeCount));
-                            File outputFile = File.createTempFile("frame"+ decodeCount + ",", ".png");
+                            File outputFile = File.createTempFile("hello"+ decodeCount + ",", ".png");
                             long startWhen = System.nanoTime();
 
                             //VideoCryptoActivity.decodedFrames.add(outputSurface.saveFrame(outputFile.getAbsolutePath()));
-                            mSendFramesCallback.sendFrames(outputSurface.saveFrame(), decodeCount);
-                            //VideoCryptoActivity.curInx++;
+                            outputSurface.saveFrame();
+                            VideoCryptoActivity.curInx++;
 
                             frameSaveTime += System.nanoTime() - startWhen;
                         }
@@ -567,7 +581,7 @@ public class ExtractBitmaps extends AndroidTestCase {
         /**
          * Saves the current frame to disk as a PNG image.
          */
-        public Bitmap saveFrame() throws IOException {
+        public void saveFrame() throws IOException {
             // glReadPixels gives us a ByteBuffer filled with what is essentially big-endian RGBA
             // data (i.e. a byte of red, followed by a byte of green...).  To use the Bitmap
             // constructor that takes an int[] array with pixel data, we need an int[] filled
@@ -604,7 +618,7 @@ public class ExtractBitmaps extends AndroidTestCase {
             GLES20.glReadPixels(0, 0, mWidth, mHeight, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE,
                     mPixelBuf);
 
-            //BufferedOutputStream bos = null;
+            BufferedOutputStream bos = null;
             Bitmap bmp = null;
 
             try {
@@ -614,7 +628,16 @@ public class ExtractBitmaps extends AndroidTestCase {
                 bmp.copyPixelsFromBuffer(mPixelBuf);
                 //bmp.compress(Bitmap.CompressFormat.PNG, 90, bos);
                 //bos.flush();
-                bmp.recycle();
+
+                // addFrame(bmp);
+
+                /*Message msg = mainHandler.obtainMessage();
+                msg.what = FRAME_SENT;
+                msg.obj = bmp;
+                mainHandler.sendMessage(msg);*/
+
+                mSendFramesCallback.callback(bmp, curInx);
+                // bmp.recycle();
                 //Log.d(TAG, "saveFrame Bitmap Info: " + (bmp == null));
             } finally {
                 //if (bos != null) bos.close();
@@ -624,7 +647,11 @@ public class ExtractBitmaps extends AndroidTestCase {
             }
             Log.d(TAG, "isRecycled: " + bmp.isRecycled());
             Log.d(TAG, "Return result Bitmap: " + bmp.getRowBytes());
-            return bmp;
+        }
+
+        private synchronized void addFrame(Bitmap bmp){
+            decodedFrames.add(bmp);
+            Log.d(TAG, "curInx: " + curInx);
         }
 
         /**
