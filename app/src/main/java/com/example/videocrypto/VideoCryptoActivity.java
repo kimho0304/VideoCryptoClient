@@ -219,15 +219,16 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
     public void callback(Bitmap bmp, int inx) {
         Log.i(TAG + "_Callback", "callback() called.");
         new Thread(() -> {
-            Log.i(TAG, "sendFrames called: " + inx);
+            // Log.i(TAG, "sendFrames called: " + inx);
             try {
                 //BitmapDataObject bitmapObject = new BitmapDataObject(bmp);
                 //byte[] serializedBitmap = bitmapObject.compressBitmap();
                 ByteArrayOutputStream stream = new ByteArrayOutputStream();
                 bmp.compress(Bitmap.CompressFormat.PNG, 100, stream);
                 byte[] serializedBitmap = stream.toByteArray();
-                bmp.recycle();
+                bmp.recycle(); // Should be recycled status.
                 Log.i(TAG, "Start the transmission: " + serializedBitmap.length);
+                // printLog("Start the transmission: " + inx);
 
                 clientDOS.writeObject(serializedBitmap);
                 clientDOS.flush();
@@ -312,7 +313,7 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
     }
 
     //@Override
-    public void sendFrames(Bitmap bmp, int inx) {
+    /* public void sendFrames(Bitmap bmp, int inx) {
         new Thread(() -> {
             Log.i(TAG, "sendFrames called: " + inx);
             try {
@@ -320,7 +321,7 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
                 byte[] serializedBitmap = bitmapObject.compressBitmap();
                 Log.i(TAG, "Start the transmission: " + serializedBitmap.length);
 
-                clientDOS.writeObject(serializedBitmap);
+                clientDOS.write(serializedBitmap);
                 clientDOS.flush();
             } catch (MalformedURLException e) {
                 printLog("MalformedURLException: " + e);
@@ -332,7 +333,7 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
                 e.printStackTrace();
             }
         }).start();
-    }
+    }*/
 
     private class ExtractFrames implements Runnable {
         @Override
@@ -347,7 +348,7 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
         }
     }
 
-    private class SendFrames implements Runnable {
+    /* private class SendFrames implements Runnable {
         @Override
         public void run() {
 
@@ -367,7 +368,7 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
                     byte[] serializedBitmap = bitmapObject.compressBitmap();
                     Log.i(TAG, "Start the transmission: " + serializedBitmap.length);
                     //clientDOS.writeInt(serializedBitmap.length);
-                    clientDOS.writeObject(serializedBitmap);
+                    clientDOS.write(serializedBitmap);
                     clientDOS.flush();
 
                     //Log.i(TAG, "The end of the send: " + (++sendCnt));
@@ -386,7 +387,7 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
                 i++;
             }
         }
-    }
+    } */
 
     // https://github.com/rantibi/MyFirstApp/blob/master/src/com/sharedpaint/serializables/SerializableBitmap.java
     public class BitmapDataObject implements Serializable {

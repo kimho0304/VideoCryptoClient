@@ -337,7 +337,6 @@ public class ExtractBitmaps{
 
                             //VideoCryptoActivity.decodedFrames.add(outputSurface.saveFrame(outputFile.getAbsolutePath()));
                             outputSurface.saveFrame();
-                            VideoCryptoActivity.curInx++;
 
                             frameSaveTime += System.nanoTime() - startWhen;
                         }
@@ -636,7 +635,7 @@ public class ExtractBitmaps{
                 msg.obj = bmp;
                 mainHandler.sendMessage(msg);*/
 
-                mSendFramesCallback.callback(bmp, curInx);
+                mSendFramesCallback.callback(bmp, curInx++);
                 // bmp.recycle();
                 //Log.d(TAG, "saveFrame Bitmap Info: " + (bmp == null));
             } finally {
@@ -647,11 +646,6 @@ public class ExtractBitmaps{
             }
             Log.d(TAG, "isRecycled: " + bmp.isRecycled());
             Log.d(TAG, "Return result Bitmap: " + bmp.getRowBytes());
-        }
-
-        private synchronized void addFrame(Bitmap bmp){
-            decodedFrames.add(bmp);
-            Log.d(TAG, "curInx: " + curInx);
         }
 
         /**
