@@ -30,7 +30,6 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.VideoView;
 
-import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.example.videocrypto.util.ExtractBitmaps;
@@ -73,6 +72,7 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
     private final int port = 9090;
     private File file;
     private int videoWidth, videoHeight;
+    public static Locker locker;
 
     // UI variables definition ↓
     private Button send_btn, select_file_btn, connectBtn;
@@ -122,6 +122,7 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
 
         // 메인 스레드를 통해 UI 작업을 위한 메인 루퍼 등록.
         mainHandler = new Handler(Looper.getMainLooper());
+        locker = new Locker();
 
         logScrollView = findViewById(R.id.logScrollView);
 
@@ -193,6 +194,7 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
                 Thread extract = null;
                 try {
                     extract = new Thread(() -> {
+                        curInx = 0;
                         try {
                             extractor.testExtractMpegFrames();
                             Log.d(TAG, "extractor called.");
@@ -217,31 +219,54 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
 
     @Override
     public void callback(Bitmap bmp, int inx) {
-        Log.i(TAG + "_Callback", "callback() called.");
-        new Thread(() -> {
-            // Log.i(TAG, "sendFrames called: " + inx);
-            try {
-                //BitmapDataObject bitmapObject = new BitmapDataObject(bmp);
-                //byte[] serializedBitmap = bitmapObject.compressBitmap();
-                ByteArrayOutputStream stream = new ByteArrayOutputStream();
-                bmp.compress(Bitmap.CompressFormat.PNG, 100, stream);
-                byte[] serializedBitmap = stream.toByteArray();
-                bmp.recycle(); // Should be recycled status.
-                Log.i(TAG, "Start the transmission: " + serializedBitmap.length);
-                // printLog("Start the transmission: " + inx);
+        // Log.i(TAG + "_Callback", "callback() called.");
+        Runnable sendFrame = new Runnable() {
+            Locker mLocker = VideoCryptoActivity.locker;
 
-                clientDOS.writeObject(serializedBitmap);
-                clientDOS.flush();
-            } catch (MalformedURLException e) {
-                printLog("MalformedURLException: " + e);
-                Log.e(TAG, "MalformedURLException: " + e);
-                e.printStackTrace();
-            } catch (IOException e) {
-                printLog("IOException: " + e);
-                Log.e(TAG, "IOException: " + e);
-                e.printStackTrace();
+            @Override
+            public void run() {
+                if (inx < MAX_FRAMES - 1) {
+                    try {
+                        //BitmapDataObject bitmapObject = new BitmapDataObject(bmp);
+                        //byte[] serializedBitmap = bitmapObject.compressBitmap();
+                        ByteArrayOutputStream stream = new ByteArrayOutputStream();
+                        Bitmap downgradedBmp = Bitmap.createScaledBitmap(bmp, (int) (bmp.getWidth() * 0.7), (int) (bmp.getHeight() * 0.7), false);
+                        downgradedBmp.compress(Bitmap.CompressFormat.JPEG, 90, stream);
+                        byte[] serializedBitmap = stream.toByteArray();
+                        bmp.recycle(); // Should be recycled status.
+                        downgradedBmp.recycle();
+                        clientDOS.writeObject(serializedBitmap);
+                        clientDOS.flush();
+                        Log.i(TAG, "Start the transmission: " + inx + ", " + serializedBitmap.length);
+                        // printLog("Start the transmission: " + inx);
+
+                        //mLocker.unlock();
+                    } catch (MalformedURLException e) {
+                        printLog("MalformedURLException: " + e);
+                        Log.e(TAG, "MalformedURLException: " + e);
+                        e.printStackTrace();
+                    } catch (IOException e) {
+                        printLog("IOException: " + e);
+                        Log.e(TAG, "IOException: " + e);
+                        e.printStackTrace();
+                    }
+                } else {
+                    try {
+                        // new byte[]{1, 2, 3} means "end signal".
+                        clientDOS.writeObject(new byte[]{1, 2, 3});
+                        clientDOS.flush();
+                        Log.d(TAG, "Sent the end signal.");
+                        //mLocker.unlock();
+                    } catch (IOException e) {
+                        printLog("IOException: " + e);
+                        Log.e(TAG, "IOException: " + e);
+                        e.printStackTrace();
+                    }
+                }
             }
-        }).start();
+        };
+
+        sendFrame.run();
     }
 
     private static class ThreadPool implements Executor {
