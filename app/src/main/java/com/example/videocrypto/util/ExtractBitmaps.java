@@ -69,7 +69,7 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public class ExtractBitmaps{
     private static final String TAG = "ExtractBitmaps_Debug";
-    private static final boolean VERBOSE = true;           // lots of logging
+    private static final boolean VERBOSE = false;           // lots of logging
 
     // where to find files (note: requires WRITE_EXTERNAL_STORAGE permission)
     private static final File FILES_DIR = Environment.getExternalStorageDirectory();
@@ -140,8 +140,8 @@ public class ExtractBitmaps{
         MediaCodec decoder = null;
         CodecOutputSurface outputSurface = null;
         MediaExtractor extractor = null;
-        int saveWidth = 720;
-        int saveHeight = 1280;
+        int saveWidth;
+        int saveHeight;
 
         /*new Thread(()->{}
         ).start();
@@ -174,9 +174,11 @@ public class ExtractBitmaps{
             extractor.selectTrack(trackIndex);
 
             MediaFormat format = extractor.getTrackFormat(trackIndex);
-            if (VERBOSE) {
-                Log.d(TAG, "Video size is " + format.getInteger(MediaFormat.KEY_WIDTH) + "x" +
+            if (true) {
+                Log.d("setVideoSize", "Video size is " + format.getInteger(MediaFormat.KEY_WIDTH) + "x" +
                         format.getInteger(MediaFormat.KEY_HEIGHT));
+                saveWidth = format.getInteger(MediaFormat.KEY_WIDTH);
+                saveHeight = format.getInteger(MediaFormat.KEY_HEIGHT);
             }
 
             // Could use width/height from the MediaFormat to get full-size frames.
@@ -749,8 +751,8 @@ public class ExtractBitmaps{
             } finally {
                 //if (bos != null) bos.close();
             }
-            // if (VERBOSE)
-                //Log.d(TAG, "Saved " + mWidth + "x" + mHeight + " frame as '" + filename + "'");
+
+            if(VERBOSE) Log.d("setVideoSize", "Saved " + mWidth + "x" + mHeight);
 
             Log.d(TAG, "isRecycled: " + bmp.isRecycled());
             Log.d(TAG, "Return result Bitmap: " + bmp.getRowBytes());

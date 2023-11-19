@@ -8,6 +8,8 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.SurfaceTexture;
+import android.media.MediaExtractor;
+import android.media.MediaFormat;
 import android.media.MediaMetadataRetriever;
 import android.media.MediaPlayer;
 import android.net.Uri;
@@ -55,6 +57,7 @@ import java.util.concurrent.Executor;
 public class VideoCryptoActivity extends AppCompatActivity implements SendFramesCallback {
     private static final String TAG = "VideoCryptoActivity_Debug";
     public static int MAX_FRAMES = -1;
+    public static int FRAME_RATE = -1;
     private int portNum, deviceId, baudRate;
     private static final int REQ_CODE = 123; // startActivityForResult에 쓰일 사용자 정의 요청 코드
     private Socket serverSocket;
@@ -64,27 +67,21 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
     public Uri selectedFile;
     int totalSize = 0;
     private static Handler mainHandler;
-    private boolean mShowStopLabel = false;
-    private DecodingClass.PlayTask mPlayTask;
-    private final Surface surface = null;
-    private final boolean mSurfaceTextureReady = false;
     private String ip = null;
     private final int port = 9090;
     private File file;
-    private int videoWidth, videoHeight;
     public static Locker locker;
+    private String fileDir;
 
     // UI variables definition ↓
     private Button send_btn, select_file_btn, connectBtn;
     private VideoView videoView;
+    private boolean isLoop;
     private MediaPlayer mediaPlayer;
     private TextView directoryText, logText;
     private EditText ipText;
     private ScrollView logScrollView;
     private Switch isLoopingSet;
-    private boolean ready = false;
-    private boolean isLoop = false;
-    public static ArrayList<Bitmap> decodedFrames = new ArrayList<>();
     public static int curInx = 0;
     private ExtractBitmaps extractor;
 
@@ -127,11 +124,6 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
         logScrollView = findViewById(R.id.logScrollView);
 
         videoView = findViewById(R.id.videoView);
-        videoView.setOnPreparedListener(mediaPlayer -> {
-            //비디오 시작
-            mediaPlayer.setLooping(true);
-            mediaPlayer.start();
-        });
 
 
         /*if (mediaPlayer == null) {
@@ -166,56 +158,11 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
         );
 
         send_btn = findViewById(R.id.sendBtn); // 데이터 전송 버튼 등록.
-        send_btn.setOnClickListener(view -> {
-            videoView.getLayoutParams().width = 720;
-            videoView.getLayoutParams().height = 1280;
-
-            Log.i(TAG, "Changed size of surface: " + videoView.getLayoutParams().width + ", " + videoView.getLayoutParams().height);
-
-            try {
-                /*Log.i(TAG, "mediaPlayer path set: " + fileDir);
-                mediaPlayer.prepareAsync();
-                Log.i(TAG, "prepareAsync called.");
-
-                ready = true;
-                mediaPlayer.setOnPreparedListener(mp -> {
-                    mediaPlayer.setLooping(isLoop);
-                    mediaPlayer.start();
-                });
-
-                mediaPlayer.setOnCompletionListener(mp -> {
-                    mediaPlayer.reset();
-                    //mediaPlayer.prepareAsync();
-                });*/
-
-                ThreadPool threadPool = new ThreadPool();
-                extractor = new ExtractBitmaps(this);
-                ExtractBitmaps.inputFile = file;
-                Thread extract = null;
-                try {
-                    extract = new Thread(() -> {
-                        curInx = 0;
-                        try {
-                            extractor.testExtractMpegFrames();
-                            Log.d(TAG, "extractor called.");
-                        } catch (Throwable e) {
-                            e.printStackTrace();
-                        }
-                    });
-                } catch (Throwable e) {
-                    Log.e(TAG, "Failed to run ExtractBimap: " + e);
-                    e.printStackTrace();
-                }
-
-                threadPool.execute(extract);
-                // sendThread.run();
-            } catch (Exception e) {
-                //Log.e(TAG, "surface view error : " + e.getMessage());
-                e.printStackTrace();
-            }
-        });
+        send_btn.setEnabled(false);
         // send_btn.setOnClickListener(view -> new ClientTask().execute());
     }
+
+    private boolean once = true;
 
     @Override
     public void callback(Bitmap bmp, int inx) {
@@ -225,16 +172,27 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
 
             @Override
             public void run() {
+                if (once) {
+                    runOnUiThread(() -> {
+                        videoView.setVideoPath(fileDir);
+                        videoView.setOnPreparedListener(mediaPlayer -> {
+                            //비디오 시작
+                            mediaPlayer.setLooping(true);
+                            mediaPlayer.start();
+                        });
+                    });
+                    once = false;
+                }
                 if (inx < MAX_FRAMES - 1) {
                     try {
                         //BitmapDataObject bitmapObject = new BitmapDataObject(bmp);
                         //byte[] serializedBitmap = bitmapObject.compressBitmap();
                         ByteArrayOutputStream stream = new ByteArrayOutputStream();
-                        Bitmap downgradedBmp = Bitmap.createScaledBitmap(bmp, (int) (bmp.getWidth() * 0.7), (int) (bmp.getHeight() * 0.7), false);
-                        downgradedBmp.compress(Bitmap.CompressFormat.JPEG, 90, stream);
+                        //Bitmap downgradedBmp = Bitmap.createScaledBitmap(bmp, (int) (bmp.getHeight() ), (int) (bmp.getWidth()), false);
+                        bmp.compress(Bitmap.CompressFormat.JPEG, 100, stream);
                         byte[] serializedBitmap = stream.toByteArray();
                         bmp.recycle(); // Should be recycled status.
-                        downgradedBmp.recycle();
+                        bmp.recycle();
                         clientDOS.writeObject(serializedBitmap);
                         clientDOS.flush();
                         Log.i(TAG, "Start the transmission: " + inx + ", " + serializedBitmap.length);
@@ -337,116 +295,6 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
         return true;
     }
 
-    //@Override
-    /* public void sendFrames(Bitmap bmp, int inx) {
-        new Thread(() -> {
-            Log.i(TAG, "sendFrames called: " + inx);
-            try {
-                BitmapDataObject bitmapObject = new BitmapDataObject(bmp);
-                byte[] serializedBitmap = bitmapObject.compressBitmap();
-                Log.i(TAG, "Start the transmission: " + serializedBitmap.length);
-
-                clientDOS.write(serializedBitmap);
-                clientDOS.flush();
-            } catch (MalformedURLException e) {
-                printLog("MalformedURLException: " + e);
-                Log.e(TAG, "MalformedURLException: " + e);
-                e.printStackTrace();
-            } catch (IOException e) {
-                printLog("IOException: " + e);
-                Log.e(TAG, "IOException: " + e);
-                e.printStackTrace();
-            }
-        }).start();
-    }*/
-
-    private class ExtractFrames implements Runnable {
-        @Override
-        public void run() {
-            ExtractBitmaps.inputFile = file;
-            try {
-                //extractor.testExtractMpegFrames();
-            } catch (Throwable e) {
-                Log.e(TAG, "Failed to run ExtractBimap: " + e);
-                e.printStackTrace();
-            }
-        }
-    }
-
-    /* private class SendFrames implements Runnable {
-        @Override
-        public void run() {
-
-            Locker locker = new Locker();
-            try {
-                locker.lock(getApplicationContext());
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-            Log.i(TAG, "ExtractBitmaps.decodeCountFlag has been true now.");
-            int i = 0;
-            while (i < ExtractBitmaps.MAX_FRAMES) {
-                //Log.i(TAG, "curInx looping.");
-                try {
-                    Bitmap tmp = decodedFrames.get(i);
-                    BitmapDataObject bitmapObject = new BitmapDataObject(tmp);
-                    byte[] serializedBitmap = bitmapObject.compressBitmap();
-                    Log.i(TAG, "Start the transmission: " + serializedBitmap.length);
-                    //clientDOS.writeInt(serializedBitmap.length);
-                    clientDOS.write(serializedBitmap);
-                    clientDOS.flush();
-
-                    //Log.i(TAG, "The end of the send: " + (++sendCnt));
-                    //printLog("The end of the send: " + (++sendCnt));
-                } catch (MalformedURLException e) {
-                    printLog("MalformedURLException: " + e);
-                    Log.e(TAG, "MalformedURLException: " + e);
-                    e.printStackTrace();
-                } catch (IOException e) {
-                    printLog("IOException: " + e);
-                    Log.e(TAG, "IOException: " + e);
-                    e.printStackTrace();
-                } catch (Throwable e) {
-                    e.printStackTrace();
-                }
-                i++;
-            }
-        }
-    } */
-
-    // https://github.com/rantibi/MyFirstApp/blob/master/src/com/sharedpaint/serializables/SerializableBitmap.java
-    public class BitmapDataObject implements Serializable {
-
-        private final Bitmap currentImage;
-
-        public BitmapDataObject(Bitmap bitmap) {
-            currentImage = bitmap;
-        }
-
-        private byte[] compressBitmap() throws IOException {
-            ByteArrayOutputStream stream = new ByteArrayOutputStream();
-            currentImage.compress(Bitmap.CompressFormat.PNG, 100, stream);
-            byte[] byteArray = stream.toByteArray();
-            currentImage.recycle();
-
-            /*OutputStream os = null;
-
-            boolean f = false;
-            try {
-                File tmpBitmap = File.createTempFile("texture", ".png");
-                os = new FileOutputStream(tmpBitmap);
-                f = currentImage.compress(Bitmap.CompressFormat.PNG, 100, os);
-            } catch (NullPointerException e) {
-                e.printStackTrace();
-            }
-            if (f) {
-                os.flush();
-                os.close();
-            }*/
-            return byteArray;
-        }
-    }
-
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) { // startActivityForResult 실행 후, 값을 전달 받는 액티비티 함수. startActivityForResult 실행 후 파일 탐색기 액티비티에서 파일을 선택 하면, 이 선택 된 파일이 전달할 값이 됨.
         // 그러므로 onActivityResult에 이 선택 된 파일을 전달함.
@@ -458,7 +306,7 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
                 selectedFile = data.getData(); // URI 객체인 selectedFile에 그 값을 할당.
                 String filename = queryName(getContentResolver(), selectedFile);
                 Log.i(TAG, "File name: " + filename);
-                String fileDir = null;
+                fileDir = null;
 
                 try {
                     file = getFile(getApplicationContext(), selectedFile);
@@ -468,18 +316,84 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
                     Log.e(TAG, "Failed to set the file: " + e);
                 }
 
-                Log.i(TAG, "The size of video: " + videoWidth + ", " + videoHeight);
-
                 directoryText.setText(fileDir); // fileName의 경로를 directoryText에 할당.
                 totalSize = Integer.parseInt(getRealSizeFromUri(this, selectedFile));
                 Log.i(TAG, "size: " + totalSize);
 
+                MediaExtractor me = new MediaExtractor();
                 MediaMetadataRetriever mmr = new MediaMetadataRetriever();
                 mmr.setDataSource(fileDir);
                 MAX_FRAMES = Integer.parseInt(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT));
+
+                try {
+                    me.setDataSource(fileDir);
+                    int numTracks = me.getTrackCount();
+                    for (int i = 0; i < numTracks; ++i) {
+                        MediaFormat format = me.getTrackFormat(i);
+                        String mime = format.getString(MediaFormat.KEY_MIME);
+                        if (mime.startsWith("video/")) {
+                            if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) {
+                                Log.d("framerateinfo", "KEY_FRAME_RATE: " + format.getInteger(MediaFormat.KEY_FRAME_RATE));
+                                Log.d("framerateinfo", "KEY_I_FRAME_INTERVAL: " + format.getString(MediaFormat.KEY_I_FRAME_INTERVAL));
+                                Log.d("framerateinfo", "format: " + format);
+
+                                new Thread(() -> {
+                                    try {
+                                        clientDOS.writeInt(format.getInteger(MediaFormat.KEY_FRAME_RATE));
+                                        clientDOS.flush();
+                                    } catch (IOException e) {
+                                        e.printStackTrace();
+                                    }
+                                }).start();
+                            } else {
+                                new Thread(() -> {
+                                    try {
+                                        clientDOS.writeInt(50);
+                                        clientDOS.flush();
+                                    } catch (IOException e) {
+                                        e.printStackTrace();
+                                    }
+                                }).start();
+                            }
+                            break;
+                        }
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
+                } finally {
+                    //Release stuff
+                    me.release();
+                }
+
                 Log.i(TAG, "MAX_FRAMES: " + MAX_FRAMES);
 
-                videoView.setVideoPath(fileDir);
+                Log.i(TAG, "Changed size of surface: " + videoView.getLayoutParams().width + ", " + videoView.getLayoutParams().height);
+
+                try {
+                    ThreadPool threadPool = new ThreadPool();
+                    extractor = new ExtractBitmaps(this);
+                    ExtractBitmaps.inputFile = file;
+                    Thread extract = null;
+
+                    try {
+                        extract = new Thread(() -> {
+                            curInx = 0;
+                            try {
+                                extractor.testExtractMpegFrames();
+                                Log.d(TAG, "extractor called.");
+                            } catch (Throwable e) {
+                                e.printStackTrace();
+                            }
+                        });
+                    } catch (Throwable e) {
+                        Log.e(TAG, "Failed to run ExtractBimap: " + e);
+                        e.printStackTrace();
+                    }
+                    threadPool.execute(extract);
+                } catch (Exception e) {
+                    //Log.e(TAG, "surface view error : " + e.getMessage());
+                    e.printStackTrace();
+                }
             }
         }
     }
