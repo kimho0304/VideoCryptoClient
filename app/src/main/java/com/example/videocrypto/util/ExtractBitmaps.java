@@ -761,7 +761,8 @@ public class ExtractBitmaps {
 
                 mSendFramesCallback.callback(bmp, curInx++);
             } finally {
-                //if (bos != null) bos.close();
+                bmp.recycle();
+                bmp = null;
             }
 
             if (VERBOSE) Log.d("setVideoSize", "Saved " + mWidth + "x" + mHeight);

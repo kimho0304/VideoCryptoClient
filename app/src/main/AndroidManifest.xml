@@ -17,6 +17,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:hardwareAccelerated="false"
+        android:largeHeap="true"
         android:supportsRtl="true"
         android:theme="@style/Theme.VideoCrypto"
         tools:targetApi="31">
@@ -55,6 +56,8 @@
         <activity
             android:name=".VideoCryptoActivity"
             android:exported="true"
+            android:hardwareAccelerated="false"
+            android:largeHeap="true"
             android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

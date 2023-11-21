@@ -157,7 +157,7 @@ public class VideoCryptoActivity extends AppCompatActivity implements KeyEvent.C
             int inx = ipText.getSelectionStart();
             Log.d(TAG, "inx: " + inx);
             StringBuilder removeLastInxString = new StringBuilder(editTxt);
-            if (editTxt.length() > 0 && inx != 0)
+            if (editTxt.length() > 0 && inx > 0)
                 removeLastInxString.deleteCharAt(--inx);
             int finalInx = inx == -1 ? 0 : inx;
             runOnUiThread(() -> {
@@ -185,29 +185,34 @@ public class VideoCryptoActivity extends AppCompatActivity implements KeyEvent.C
                         videoView.setOnPreparedListener(mediaPlayer -> {
                             //비디오 시작
                             mediaPlayer.setLooping(true);
+                            mediaPlayer.setVolume(0, 0); // Set videoView mute.
                             mediaPlayer.start();
                         });
                     });
                     once = false;
                 }
+
                 if (inx < MAX_FRAMES - 1) {
                     try {
                         //BitmapDataObject bitmapObject = new BitmapDataObject(bmp);
                         //byte[] serializedBitmap = bitmapObject.compressBitmap();
-                        ByteArrayOutputStream stream = new ByteArrayOutputStream(16777216);
+                        ByteArrayOutputStream stream = new ByteArrayOutputStream();
                         //Bitmap downgradedBmp = Bitmap.createScaledBitmap(bmp, (int) (bmp.getHeight() ), (int) (bmp.getWidth()), false);
                         bmp.compress(Bitmap.CompressFormat.JPEG, 100, stream);
 
                         byte[] serializedBitmap = stream.toByteArray();
+                        Log.d("bytesOfBitmap", "Bitmap size: " + serializedBitmap.length);
                         bmp.recycle(); // Should be recycled status.
                         clientDOS.writeObject(serializedBitmap);
+                        serializedBitmap = null;
                         clientDOS.flush();
-                        stream.flush();
-                        stream.close();
-                        // Log.i(TAG, "Start the transmission: " + inx + ", " + serializedBitmap.length);
-                        // printLog("Start the transmission: " + inx);
 
-                        //mLocker.unlock();
+
+                        // TODO: !! SHOULD CALL THIS METHOD TO AVOID OUT OF MEMORY EXCEPTION !!
+                        clientDOS.reset();
+
+
+                        stream.close();
                     } catch (MalformedURLException e) {
                         printLog("MalformedURLException: " + e);
                         Log.e(TAG, "MalformedURLException: " + e);
