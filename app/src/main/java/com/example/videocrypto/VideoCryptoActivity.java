@@ -1,29 +1,27 @@
 package com.example.videocrypto;
 
 import android.app.Activity;
-import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Bitmap;
-import android.graphics.SurfaceTexture;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.media.MediaMetadataRetriever;
 import android.media.MediaPlayer;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.Message;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
+import android.text.InputType;
 import android.util.Log;
+import android.view.KeyEvent;
 import android.view.Menu;
-import android.view.Surface;
-import android.view.TextureView;
-import android.view.View;
+import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ScrollView;
@@ -39,22 +37,19 @@ import com.example.videocrypto.util.Locker;
 import com.example.videocrypto.util.SendFramesCallback;
 
 import java.io.ByteArrayOutputStream;
-import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
-import java.io.Serializable;
 import java.net.InetAddress;
 import java.net.MalformedURLException;
 import java.net.Socket;
 import java.net.UnknownHostException;
-import java.util.ArrayList;
 import java.util.concurrent.Executor;
 
-public class VideoCryptoActivity extends AppCompatActivity implements SendFramesCallback {
+public class VideoCryptoActivity extends AppCompatActivity implements KeyEvent.Callback, SendFramesCallback {
     private static final String TAG = "VideoCryptoActivity_Debug";
     public static int MAX_FRAMES = -1;
     public static int FRAME_RATE = -1;
@@ -125,21 +120,13 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
 
         videoView = findViewById(R.id.videoView);
 
-
-        /*if (mediaPlayer == null) {
-            mediaPlayer = new MediaPlayer();
-            Log.i(TAG, "mediaPlayer constructor set.");
-            //mediaPlayer.setSurface(videoView.getHolder().getSurface());
-        } else {
-            mediaPlayer.reset();
-        }
-*/
         mediaPlayer = new MediaPlayer();
         Log.i(TAG, "mediaPlayer constructor set.");
 
         directoryText = findViewById(R.id.fileDirectoryText);
         logText = findViewById(R.id.logText);
         ipText = findViewById(R.id.ipText);
+
         isLoopingSet = findViewById(R.id.isLooping);
         isLoopingSet.setOnCheckedChangeListener((buttonView, isChecked) -> {
             isLoop = isChecked;
@@ -160,6 +147,26 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
         send_btn = findViewById(R.id.sendBtn); // 데이터 전송 버튼 등록.
         send_btn.setEnabled(false);
         // send_btn.setOnClickListener(view -> new ClientTask().execute());
+    }
+
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        Log.d(TAG, "Key Pressed: " + keyCode);
+        if (keyCode == KeyEvent.KEYCODE_DEL) {
+            String editTxt = ipText.getText().toString();
+            int inx = ipText.getSelectionStart();
+            Log.d(TAG, "inx: " + inx);
+            StringBuilder removeLastInxString = new StringBuilder(editTxt);
+            if (editTxt.length() > 0 && inx != 0)
+                removeLastInxString.deleteCharAt(--inx);
+            int finalInx = inx == -1 ? 0 : inx;
+            runOnUiThread(() -> {
+                ipText.setText(removeLastInxString.toString());
+                ipText.setSelection(finalInx);
+            });
+            return true;
+        }
+        return super.onKeyDown(keyCode, event);
     }
 
     private boolean once = true;
@@ -187,15 +194,17 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
                     try {
                         //BitmapDataObject bitmapObject = new BitmapDataObject(bmp);
                         //byte[] serializedBitmap = bitmapObject.compressBitmap();
-                        ByteArrayOutputStream stream = new ByteArrayOutputStream();
+                        ByteArrayOutputStream stream = new ByteArrayOutputStream(16777216);
                         //Bitmap downgradedBmp = Bitmap.createScaledBitmap(bmp, (int) (bmp.getHeight() ), (int) (bmp.getWidth()), false);
                         bmp.compress(Bitmap.CompressFormat.JPEG, 100, stream);
+
                         byte[] serializedBitmap = stream.toByteArray();
                         bmp.recycle(); // Should be recycled status.
-                        bmp.recycle();
                         clientDOS.writeObject(serializedBitmap);
                         clientDOS.flush();
-                        Log.i(TAG, "Start the transmission: " + inx + ", " + serializedBitmap.length);
+                        stream.flush();
+                        stream.close();
+                        // Log.i(TAG, "Start the transmission: " + inx + ", " + serializedBitmap.length);
                         // printLog("Start the transmission: " + inx);
 
                         //mLocker.unlock();
@@ -232,6 +241,7 @@ public class VideoCryptoActivity extends AppCompatActivity implements SendFrames
         public void execute(final Runnable command) {
             new Thread(command).start();
         }
+
     }
 
     private void toastMsg(String s) {

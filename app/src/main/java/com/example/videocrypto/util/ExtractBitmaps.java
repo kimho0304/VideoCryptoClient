@@ -67,7 +67,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * (This was derived from bits and pieces of CTS tests, and is packaged as such, but is not
  * currently part of CTS.)
  */
-public class ExtractBitmaps{
+public class ExtractBitmaps {
     private static final String TAG = "ExtractBitmaps_Debug";
     private static final boolean VERBOSE = false;           // lots of logging
 
@@ -82,13 +82,16 @@ public class ExtractBitmaps{
     public static Handler mainHandler;
     private static SendFramesCallback mSendFramesCallback;
 
-    public ExtractBitmaps(SendFramesCallback mSendFramesCallback){
+    public ExtractBitmaps(SendFramesCallback mSendFramesCallback) {
         this.mSendFramesCallback = mSendFramesCallback;
     }
 
-    /** test entry point */
+    /**
+     * test entry point
+     */
     public void testExtractMpegFrames() throws Throwable {
         MAX_FRAMES = VideoCryptoActivity.MAX_FRAMES;
+        Log.d(TAG + "MAX_FRAMES", "MAX_FRAMES: " + MAX_FRAMES);
         ExtractMpegFramesWrapper.runTest(this);
     }
 
@@ -169,7 +172,7 @@ public class ExtractBitmaps{
             int trackIndex = selectTrack(extractor);
             if (trackIndex < 0) {
                 throw new RuntimeException("No video track found in " + file
-            );
+                );
             }
             extractor.selectTrack(trackIndex);
 
@@ -193,7 +196,12 @@ public class ExtractBitmaps{
             decoder.start();
 
             DoExtract doExtract = new DoExtract(extractor, trackIndex, decoder, outputSurface);
-            doExtract.run();
+            try {
+                doExtract.run();
+            } catch (Exception e) {
+                Log.e(TAG + "Error", "Error: " + e);
+                e.printStackTrace();
+            }
         } finally {
             // release everything we grabbed
             if (outputSurface != null) {
@@ -233,10 +241,11 @@ public class ExtractBitmaps{
 
         return -1;
     }
+
     /**
      * Work loop.
      */
-    private static class DoExtract implements Runnable{
+    private static class DoExtract implements Runnable {
         Locker locker;
         private MediaExtractor extractor;
         private int trackIndex;
@@ -244,7 +253,7 @@ public class ExtractBitmaps{
         private CodecOutputSurface outputSurface;
 
         DoExtract(MediaExtractor extractor, int trackIndex, MediaCodec decoder,
-                  CodecOutputSurface outputSurface){
+                  CodecOutputSurface outputSurface) {
             this.locker = VideoCryptoActivity.locker;
             this.extractor = extractor;
             this.trackIndex = trackIndex;
@@ -337,15 +346,17 @@ public class ExtractBitmaps{
                             outputSurface.drawImage(true);
 
                             if (decodeCount < MAX_FRAMES) {
-                                //File outputFile = new File(FILES_DIR, String.format("frame-%02d.png", decodeCount));
+                                Log.d(TAG + "decodeCount", "decodeCount: " + decodeCount);
+
+                                /*File outputFile = new File(FILES_DIR, String.format("frame-%02d.png", decodeCount));
                                 try {
-                                    File outputFile = File.createTempFile("hello"+ decodeCount + ",", ".png");
+                                    File outputFile = File.createTempFile("hello" + decodeCount + ",", ".png");
                                 } catch (IOException e) {
                                     throw new RuntimeException(e);
                                 }
+                                */
                                 long startWhen = System.nanoTime();
 
-                                //VideoCryptoActivity.decodedFrames.add(outputSurface.saveFrame(outputFile.getAbsolutePath()));
                                 try {
                                     outputSurface.saveFrame();
                                     //locker.lock();
@@ -446,14 +457,15 @@ public class ExtractBitmaps{
                     // need to wait for the onFrameAvailable callback to fire.
                     decoder.releaseOutputBuffer(decoderStatus, doRender);
                     if (doRender) {
-                        if (VERBOSE) Log.d(TAG, "awaiting decode of frame " + decodeCount);
+                        if (true) Log.d(TAG, "awaiting decode of frame " + decodeCount);
 
                         outputSurface.awaitNewImage();
                         outputSurface.drawImage(true);
 
                         if (decodeCount < MAX_FRAMES) {
+                            Log.d(TAG, "decodeCount: " + decodeCount);
                             //File outputFile = new File(FILES_DIR, String.format("frame-%02d.png", decodeCount));
-                            File outputFile = File.createTempFile("hello"+ decodeCount + ",", ".png");
+                            File outputFile = File.createTempFile("hello" + decodeCount + ",", ".png");
                             long startWhen = System.nanoTime();
 
                             //VideoCryptoActivity.decodedFrames.add(outputSurface.saveFrame(outputFile.getAbsolutePath()));
@@ -752,10 +764,10 @@ public class ExtractBitmaps{
                 //if (bos != null) bos.close();
             }
 
-            if(VERBOSE) Log.d("setVideoSize", "Saved " + mWidth + "x" + mHeight);
+            if (VERBOSE) Log.d("setVideoSize", "Saved " + mWidth + "x" + mHeight);
 
-            Log.d(TAG, "isRecycled: " + bmp.isRecycled());
-            Log.d(TAG, "Return result Bitmap: " + bmp.getRowBytes());
+            // Log.d(TAG, "isRecycled: " + bmp.isRecycled());
+            // Log.d(TAG, "Return result Bitmap: " + bmp.getRowBytes());
         }
 
         /**
@@ -781,8 +793,8 @@ public class ExtractBitmaps{
                 // X, Y, Z, U, V
                 -1.0f, -1.0f, 0, 0.f, 0.f,
                 1.0f, -1.0f, 0, 1.f, 0.f,
-                -1.0f,  1.0f, 0, 0.f, 1.f,
-                1.0f,  1.0f, 0, 1.f, 1.f,
+                -1.0f, 1.0f, 0, 0.f, 1.f,
+                1.0f, 1.0f, 0, 1.f, 1.f,
         };
 
         private FloatBuffer mTriangleVertices;
