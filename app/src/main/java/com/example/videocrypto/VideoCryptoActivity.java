@@ -6,6 +6,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.media.MediaMetadataRetriever;
@@ -21,6 +23,8 @@ import android.text.InputType;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.Menu;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
 import android.widget.EditText;
@@ -30,6 +34,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.VideoView;
 
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.example.videocrypto.util.ExtractBitmaps;
@@ -47,9 +52,10 @@ import java.net.InetAddress;
 import java.net.MalformedURLException;
 import java.net.Socket;
 import java.net.UnknownHostException;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
 
-public class VideoCryptoActivity extends AppCompatActivity implements KeyEvent.Callback, SendFramesCallback {
+public class VideoCryptoActivity extends AppCompatActivity  implements SurfaceHolder.Callback, KeyEvent.Callback, SendFramesCallback {
     private static final String TAG = "VideoCryptoActivity_Debug";
     public static int MAX_FRAMES = -1;
     public static int FRAME_RATE = -1;
@@ -70,7 +76,8 @@ public class VideoCryptoActivity extends AppCompatActivity implements KeyEvent.C
 
     // UI variables definition ↓
     private Button send_btn, select_file_btn, connectBtn;
-    private VideoView videoView;
+    private SurfaceView videoView;
+    private SurfaceHolder surfaceHolder;
     private boolean isLoop;
     private MediaPlayer mediaPlayer;
     private TextView directoryText, logText;
@@ -79,6 +86,9 @@ public class VideoCryptoActivity extends AppCompatActivity implements KeyEvent.C
     private Switch isLoopingSet;
     public static int curInx = 0;
     private ExtractBitmaps extractor;
+
+    // Queue definition
+    ArrayBlockingQueue<Bitmap> frameQueue;
 
     @Override
     protected void onResume() { //화면에 나타나있고 실행 중일 때
@@ -115,10 +125,13 @@ public class VideoCryptoActivity extends AppCompatActivity implements KeyEvent.C
         // 메인 스레드를 통해 UI 작업을 위한 메인 루퍼 등록.
         mainHandler = new Handler(Looper.getMainLooper());
         locker = new Locker();
+        frameQueue = new ArrayBlockingQueue<>(1024, true);
 
         logScrollView = findViewById(R.id.logScrollView);
 
         videoView = findViewById(R.id.videoView);
+        surfaceHolder = videoView.getHolder();
+        surfaceHolder.addCallback(this);
 
         mediaPlayer = new MediaPlayer();
         Log.i(TAG, "mediaPlayer constructor set.");
@@ -169,71 +182,146 @@ public class VideoCryptoActivity extends AppCompatActivity implements KeyEvent.C
         return super.onKeyDown(keyCode, event);
     }
 
+    @Override
+    public void surfaceCreated(@NonNull SurfaceHolder holder) {
+
+    }
+
+    @Override
+    public void surfaceChanged(@NonNull SurfaceHolder holder, int format, int width, int height) {
+
+    }
+
+    @Override
+    public void surfaceDestroyed(@NonNull SurfaceHolder holder) {
+
+    }
+
+    private class DrawFrame extends Thread {
+        private Bitmap bmp;
+        public DrawFrame(Bitmap bmp){
+            this.bmp = bmp;
+        }
+        @Override
+        public void run() {
+            // Log.i(TAG, "drawFrame() running.");
+            Canvas canvas = null;
+            int inx = 0;
+            for (; inx < 1; inx++) {
+                try {
+                    // Draw the current frame
+                    canvas = surfaceHolder.lockCanvas();
+                    if (canvas != null) {
+                        // Clear the canvas
+                        canvas.drawColor(Color.BLACK);
+
+                        // Bitmap tmp = frameQueue.poll(200, TimeUnit.MICROSECONDS);
+                        if(this.bmp != null && !(this.bmp.isRecycled())) {
+                            canvas.drawBitmap(this.bmp, 0, 0, null);
+                            synchronized (this) {
+                                this.wait(FRAME_RATE);
+                            }
+                            this.bmp.recycle();
+                            this.bmp = null;
+                        }
+                    }
+                } catch (InterruptedException e) {
+                    Log.e(TAG, "InterruptedException: " + e);
+                    e.printStackTrace();
+                } finally {
+                    if (canvas != null) {
+                        surfaceHolder.unlockCanvasAndPost(canvas);
+                    }
+                }
+            }
+        }
+    }
+
+    private void setVideoSize(int width, int height) {
+        float videoProportion = (float) width / (float) height;
+
+        // Get the width of the screen
+        int screenWidth = getWindowManager().getDefaultDisplay().getWidth();
+        int screenHeight = getWindowManager().getDefaultDisplay().getHeight();
+        float screenProportion = (float) screenWidth / (float) screenHeight;
+
+        // Get the SurfaceView layout parameters
+        android.view.ViewGroup.LayoutParams lp = videoView.getLayoutParams();
+        if (videoProportion > screenProportion) {
+            lp.width = screenWidth;
+            lp.height = (int) ((float) screenWidth / videoProportion);
+        } else {
+            lp.width = (int) (videoProportion * (float) screenHeight);
+            lp.height = screenHeight;
+        }
+
+        Log.d("setVideoSize", "size info: " + width + ", " + height);
+        //lp.width = width;
+        //lp.height = height;
+
+        // Commit the layout parameters
+        runOnUiThread(() -> {
+            // Commit the layout parameters
+            videoView.setLayoutParams(lp);
+            //surfaceHolder.setFixedSize(lp.width, lp.height);
+            Log.d("setVideoSize", "setFixedSize called: " + lp.width + ", " + lp.height);
+        });
+    }
+
     private boolean once = true;
 
     @Override
-    public void callback(Bitmap bmp, int inx) {
+    public void callback(Bitmap bmp, int inx) throws InterruptedException {
         // Log.i(TAG + "_Callback", "callback() called.");
-        Runnable sendFrame = new Runnable() {
-            Locker mLocker = VideoCryptoActivity.locker;
 
-            @Override
-            public void run() {
-                if (once) {
-                    runOnUiThread(() -> {
-                        videoView.setVideoPath(fileDir);
-                        videoView.setOnPreparedListener(mediaPlayer -> {
-                            //비디오 시작
-                            mediaPlayer.setLooping(true);
-                            mediaPlayer.setVolume(0, 0); // Set videoView mute.
-                            mediaPlayer.start();
-                        });
-                    });
-                    once = false;
+        Bitmap tmp = bmp;
+        runOnUiThread(() -> new DrawFrame(tmp).run());
+        if (once) {
+            setVideoSize(bmp.getWidth(), bmp.getHeight());
+            once = false;
+        }
+
+        Runnable sendFrame = () -> {
+            if (inx < MAX_FRAMES - 1) {
+                try {
+                    //BitmapDataObject bitmapObject = new BitmapDataObject(bmp);
+                    //byte[] serializedBitmap = bitmapObject.compressBitmap();
+                    ByteArrayOutputStream stream = new ByteArrayOutputStream();
+                    //Bitmap downgradedBmp = Bitmap.createScaledBitmap(bmp, (int) (bmp.getHeight() ), (int) (bmp.getWidth()), false);
+                    bmp.compress(Bitmap.CompressFormat.JPEG, 100, stream);
+
+                    byte[] serializedBitmap = stream.toByteArray();
+                    Log.d("bytesOfBitmap", "Bitmap size: " + serializedBitmap.length + ", " + inx);
+
+                    bmp.recycle(); // Should be recycled status.
+                    clientDOS.writeObject(serializedBitmap);
+                    clientDOS.flush();
+                    serializedBitmap = null;
+
+                    // TODO: !! SHOULD CALL THIS METHOD TO AVOID OUT OF MEMORY EXCEPTION !!
+                    clientDOS.reset();
+
+                    stream.close();
+                } catch (MalformedURLException e) {
+                    printLog("MalformedURLException: " + e);
+                    Log.e(TAG, "MalformedURLException: " + e);
+                    e.printStackTrace();
+                } catch (IOException e) {
+                    printLog("IOException: " + e);
+                    Log.e(TAG, "IOException: " + e);
+                    e.printStackTrace();
                 }
-
-                if (inx < MAX_FRAMES - 1) {
-                    try {
-                        //BitmapDataObject bitmapObject = new BitmapDataObject(bmp);
-                        //byte[] serializedBitmap = bitmapObject.compressBitmap();
-                        ByteArrayOutputStream stream = new ByteArrayOutputStream();
-                        //Bitmap downgradedBmp = Bitmap.createScaledBitmap(bmp, (int) (bmp.getHeight() ), (int) (bmp.getWidth()), false);
-                        bmp.compress(Bitmap.CompressFormat.JPEG, 100, stream);
-
-                        byte[] serializedBitmap = stream.toByteArray();
-                        Log.d("bytesOfBitmap", "Bitmap size: " + serializedBitmap.length);
-                        bmp.recycle(); // Should be recycled status.
-                        clientDOS.writeObject(serializedBitmap);
-                        serializedBitmap = null;
-                        clientDOS.flush();
-
-
-                        // TODO: !! SHOULD CALL THIS METHOD TO AVOID OUT OF MEMORY EXCEPTION !!
-                        clientDOS.reset();
-
-
-                        stream.close();
-                    } catch (MalformedURLException e) {
-                        printLog("MalformedURLException: " + e);
-                        Log.e(TAG, "MalformedURLException: " + e);
-                        e.printStackTrace();
-                    } catch (IOException e) {
-                        printLog("IOException: " + e);
-                        Log.e(TAG, "IOException: " + e);
-                        e.printStackTrace();
-                    }
-                } else {
-                    try {
-                        // new byte[]{1, 2, 3} means "end signal".
-                        clientDOS.writeObject(new byte[]{1, 2, 3});
-                        clientDOS.flush();
-                        Log.d(TAG, "Sent the end signal.");
-                        //mLocker.unlock();
-                    } catch (IOException e) {
-                        printLog("IOException: " + e);
-                        Log.e(TAG, "IOException: " + e);
-                        e.printStackTrace();
-                    }
+            } else {
+                try {
+                    // new byte[]{1, 2, 3} means "end signal".
+                    clientDOS.writeObject(new byte[]{1, 2, 3});
+                    clientDOS.flush();
+                    Log.d(TAG, "Sent the end signal.");
+                    //mLocker.unlock();
+                } catch (IOException e) {
+                    printLog("IOException: " + e);
+                    Log.e(TAG, "IOException: " + e);
+                    e.printStackTrace();
                 }
             }
         };
@@ -310,6 +398,29 @@ public class VideoCryptoActivity extends AppCompatActivity implements KeyEvent.C
         return true;
     }
 
+    private File drawableToFile(int drawableId) throws IOException {
+        InputStream iS = null;
+        OutputStream oS = null;
+        File f = null;
+        try {
+            f = File.createTempFile("video", ".mp4");
+            iS = getResources().openRawResource(drawableId);
+            oS = new FileOutputStream(f);
+            byte buf[] = new byte[8192];
+            int len;
+            while ((len = iS.read(buf)) != -1)
+                oS.write(buf, 0, len);
+        } catch (IOException e) {
+            Log.e(TAG, "Failed to convert drawable to file: " + e);
+            e.printStackTrace();
+        }finally {
+            oS.close();
+            iS.close();
+        }
+
+        return f;
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) { // startActivityForResult 실행 후, 값을 전달 받는 액티비티 함수. startActivityForResult 실행 후 파일 탐색기 액티비티에서 파일을 선택 하면, 이 선택 된 파일이 전달할 값이 됨.
         // 그러므로 onActivityResult에 이 선택 된 파일을 전달함.
@@ -340,6 +451,8 @@ public class VideoCryptoActivity extends AppCompatActivity implements KeyEvent.C
                 mmr.setDataSource(fileDir);
                 MAX_FRAMES = Integer.parseInt(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT));
 
+                Log.d("bitratevideo", "METADATA_KEY_CAPTURE_FRAMERATE: " + mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE));
+                Log.d("bitratevideo", "METADATA_KEY_SAMPLERATE: " + mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_SAMPLERATE));
                 try {
                     me.setDataSource(fileDir);
                     int numTracks = me.getTrackCount();
@@ -354,6 +467,7 @@ public class VideoCryptoActivity extends AppCompatActivity implements KeyEvent.C
 
                                 new Thread(() -> {
                                     try {
+                                        FRAME_RATE = format.getInteger(MediaFormat.KEY_FRAME_RATE);
                                         clientDOS.writeInt(format.getInteger(MediaFormat.KEY_FRAME_RATE));
                                         clientDOS.flush();
                                     } catch (IOException e) {
@@ -377,7 +491,12 @@ public class VideoCryptoActivity extends AppCompatActivity implements KeyEvent.C
                     e.printStackTrace();
                 } finally {
                     //Release stuff
-                    me.release();
+                    try {
+                        me.release();
+                        mmr.release();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
                 }
 
                 Log.i(TAG, "MAX_FRAMES: " + MAX_FRAMES);

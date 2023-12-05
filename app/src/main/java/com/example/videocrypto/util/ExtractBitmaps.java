@@ -359,7 +359,6 @@ public class ExtractBitmaps {
 
                                 try {
                                     outputSurface.saveFrame();
-                                    //locker.lock();
                                 } catch (IOException e) {
                                     throw new RuntimeException(e);
                                 }
@@ -760,6 +759,8 @@ public class ExtractBitmaps {
                 bmp.copyPixelsFromBuffer(mPixelBuf);
 
                 mSendFramesCallback.callback(bmp, curInx++);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
             } finally {
                 bmp.recycle();
                 bmp = null;
