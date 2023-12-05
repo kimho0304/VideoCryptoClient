@@ -66,7 +66,7 @@ public class VideoCryptoActivity extends AppCompatActivity  implements SurfaceHo
     private ObjectOutputStream clientDOS;
     private final long cnt = 0;
     public Uri selectedFile;
-    int totalSize = 0;
+    long totalSize = 0;
     private static Handler mainHandler;
     private String ip = null;
     private final int port = 9090;
@@ -363,7 +363,7 @@ public class VideoCryptoActivity extends AppCompatActivity  implements SurfaceHo
                     try { // 앞서 정의된 ip(192.168.0.XX)와 port(9090)로 새로운 소켓 객체를 할당. new Socket 구문은 try/catch문 작성이 필수이므로 try/catch문도 추가함.
                         serverSocket = new Socket(ip, port);
                         Log.i(TAG, String.valueOf(serverSocket.isConnected()));
-                        InetAddress clientHost = serverSocket.getLocalAddress();
+                        InetAddress clientHost = serverSocket.getInetAddress();
                         int clientPort = serverSocket.getPort();
 
                         clientOS = serverSocket.getOutputStream();
@@ -371,8 +371,8 @@ public class VideoCryptoActivity extends AppCompatActivity  implements SurfaceHo
                         //clientDOSFlag = new DataOutputStream(serverSocket.getOutputStream());
 
                         printLog("Connection Success.");
-                        printLog("The Client is connected: " + clientHost + ":" + clientPort + ", host: " + clientHost.getHostName());
-                        Log.i(TAG, "Server is connected: " + clientHost + ":" + clientPort + ", host: " + clientHost.getHostName());
+                        printLog("The Client is connected: " + clientHost.getHostName() + ":" + clientPort);
+                        Log.i(TAG, "Server is connected: " + clientHost.getHostName() + ":" + clientPort);
 
                     } catch (IOException e) {
                         printLog("Failed to allocate the serverSocket: " + e);
@@ -443,7 +443,7 @@ public class VideoCryptoActivity extends AppCompatActivity  implements SurfaceHo
                 }
 
                 directoryText.setText(fileDir); // fileName의 경로를 directoryText에 할당.
-                totalSize = Integer.parseInt(getRealSizeFromUri(this, selectedFile));
+                totalSize = Long.parseLong(getRealSizeFromUri(this, selectedFile));
                 Log.i(TAG, "size: " + totalSize);
 
                 MediaExtractor me = new MediaExtractor();
