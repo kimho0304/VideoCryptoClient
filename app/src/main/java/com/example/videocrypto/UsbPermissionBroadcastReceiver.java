@@ -22,7 +22,6 @@ public class UsbPermissionBroadcastReceiver extends BroadcastReceiver {
         Log.d("hello_receive", "onReceive of Main");
 
         if (ACTION_USB_PERMISSION.equals(intent.getAction())) {
-//            Toast.makeText(context, "권한 묻기", Toast.LENGTH_SHORT).show();
             synchronized (this) {
 
                 device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
@@ -44,9 +43,6 @@ public class UsbPermissionBroadcastReceiver extends BroadcastReceiver {
             }
         }
         else if(ACTION_USB_ATTACHED.equals(intent.getAction())){
-//            Log.d("hello_receive", "Device is attactech");
-//            Toast.makeText(context, "기기 연결", Toast.LENGTH_SHORT).show();
-
             UsbManager manager = (UsbManager) context.getSystemService(Context.USB_SERVICE);
 
             HashMap<String, UsbDevice> deviceList = manager.getDeviceList();
@@ -55,7 +51,6 @@ public class UsbPermissionBroadcastReceiver extends BroadcastReceiver {
             try {
                 while (deviceIterator.hasNext()) {
                     device = deviceIterator.next();
-                    //Log.d("hello_terminal", "Devices: " + device + ", PID: " + String.valueOf(device.getProductId()) + ", VID: " + String.valueOf(device.getVendorId()));
                     msg = "Device name: " + device.getDeviceName() + ", PID: " + String.valueOf(device.getProductId()) + ", VID: " + String.valueOf(device.getVendorId());
                 }
             }
@@ -63,13 +58,10 @@ public class UsbPermissionBroadcastReceiver extends BroadcastReceiver {
             }
 
             if(device != null){
-                //call method to set up device communication
-                //Log.d("hello_receive", "Device lists: "+device);
                 msg = "Device name: "+device.getDeviceName()+", PID: "+String.valueOf(device.getProductId())+", VID: "+String.valueOf(device.getVendorId());
 //                Toast.makeText(context.getApplicationContext(), msg, Toast.LENGTH_SHORT).show();
             }
             else{
-                //Log.d("hello_receive", "NULL");
                 msg = "NULL";
 //                Toast.makeText(context.getApplicationContext(), msg, Toast.LENGTH_SHORT).show();
             }

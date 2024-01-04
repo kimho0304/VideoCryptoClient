@@ -1,105 +1,103 @@
 package com.example.videocrypto;
 
-import static androidx.documentfile.provider.DocumentFile.fromSingleUri;
-
 import android.app.Activity;
-import android.app.PendingIntent;
-import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
-import android.graphics.SurfaceTexture;
-import android.media.MediaPlayer;
+import android.graphics.Color;
+import android.media.MediaExtractor;
+import android.media.MediaFormat;
+import android.media.MediaMetadataRetriever;
 import android.net.Uri;
-import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
+import android.text.InputType;
 import android.util.Log;
+import android.view.KeyEvent;
 import android.view.Menu;
-import android.view.Surface;
-import android.view.TextureView;
-import android.view.View;
-import android.widget.AdapterView;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
+import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
-import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.ScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.VideoView;
 
 import androidx.annotation.NonNull;
-import androidx.appcompat.app.ActionBar;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.documentfile.provider.DocumentFile;
 
-import org.w3c.dom.Text;
+import com.example.videocrypto.util.ExtractBitmaps;
+import com.example.videocrypto.util.SendFramesCallback;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
-import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
+import java.io.ObjectOutputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.MalformedURLException;
 import java.net.Socket;
 import java.net.UnknownHostException;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.Executor;
 
-public class VideoCryptoActivity extends AppCompatActivity implements TextureView.SurfaceTextureListener, DecodingClass.PlayerFeedback {
+public class VideoCryptoActivity extends AppCompatActivity  implements SurfaceHolder.Callback, KeyEvent.Callback, SendFramesCallback {
     private static final String TAG = "VideoCryptoActivity_Debug";
-    private final BroadcastReceiver permission = new com.example.videocrypto.UsbPermissionBroadcastReceiver();
+    public static int MAX_FRAMES = -1;
+    public static int FRAME_RATE = -1;
     private int portNum, deviceId, baudRate;
     private static final int REQ_CODE = 123; // startActivityForResult에 쓰일 사용자 정의 요청 코드
-    private final Thread transport = null;
     private Socket serverSocket;
-    private DataOutputStream clientDOS;
-    private DataOutputStream clientDOSFlag;
-    private long cnt = 0;
+    private OutputStream clientOS;
+    private ObjectOutputStream clientDOS;
+    private final long cnt = 0;
     public Uri selectedFile;
-    long totalRead = 0;
-    int totalSize = 0;
-    private Handler mainHandler;
-    private static final int decodeCount = 0;
-    private boolean mShowStopLabel = false;
-    private DecodingClass.PlayTask mPlayTask;
-    private Surface surface = null;
-    private boolean mSurfaceTextureReady = false;
+    long totalSize = 0;
+    private static Handler mainHandler;
     private String ip = null;
     private final int port = 9090;
     private File file;
+    private String fileDir;
 
     // UI variables definition ↓
     private Button send_btn, select_file_btn, connectBtn;
-    private TextureView kl, videoView;
+    private SurfaceView videoView;
+    private SurfaceHolder surfaceHolder;
+    private boolean isLoop;
     private TextView directoryText, logText;
     private EditText ipText;
     private ScrollView logScrollView;
-    private boolean ready = false;
+    private Switch isLoopingSet;
+    public static int curInx = 0;
+    private ExtractBitmaps extractor;
+
+    // Queue definition
+    ArrayBlockingQueue<Bitmap> frameQueue;
 
     @Override
-    protected void onResume() { //화면에 나타나있고 실행 중일 때
-        super.onResume();
-    }
-
-    protected void onPause() { //액티비티 화면의 일부가 다른 액티비티에 가려질 때
-        super.onPause();
+    protected void onDestroy() {
+        super.onDestroy();
+        if (clientOS != null && clientDOS != null) {
+            try {
+                clientOS.close();
+                clientDOS.close();
+            } catch (IOException e) {
+                Log.e(TAG, "Failed to close OuputStreams: " + e);
+                e.printStackTrace();
+            }
+        }
     }
 
     @Override
@@ -113,11 +111,13 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
 
         // 메인 스레드를 통해 UI 작업을 위한 메인 루퍼 등록.
         mainHandler = new Handler(Looper.getMainLooper());
+        frameQueue = new ArrayBlockingQueue<>(1024, true);
 
         logScrollView = findViewById(R.id.logScrollView);
 
         videoView = findViewById(R.id.videoView);
-        videoView.setSurfaceTextureListener(this);
+        surfaceHolder = videoView.getHolder();
+        surfaceHolder.addCallback(this);
 
         directoryText = findViewById(R.id.fileDirectoryText);
         logText = findViewById(R.id.logText);
@@ -134,10 +134,180 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
                     openFile(); //openFile() 실행.
                 }
         );
+    }
 
-        send_btn = findViewById(R.id.sendBtn); // 데이터 전송 버튼 등록.
-        send_btn.setOnClickListener(view -> clickPlayStop());
-        // send_btn.setOnClickListener(view -> new ClientTask().execute());
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        Log.d(TAG, "Key Pressed: " + keyCode);
+        if (keyCode == KeyEvent.KEYCODE_DEL) {
+            String editTxt = ipText.getText().toString();
+            int inx = ipText.getSelectionStart();
+            Log.d(TAG, "inx: " + inx);
+            StringBuilder removeLastInxString = new StringBuilder(editTxt);
+            if (editTxt.length() > 0 && inx > 0)
+                removeLastInxString.deleteCharAt(--inx);
+            int finalInx = inx == -1 ? 0 : inx;
+            runOnUiThread(() -> {
+                ipText.setText(removeLastInxString.toString());
+                ipText.setSelection(finalInx);
+            });
+            return true;
+        }
+        return super.onKeyDown(keyCode, event);
+    }
+
+    @Override
+    public void surfaceCreated(@NonNull SurfaceHolder holder) {
+
+    }
+
+    @Override
+    public void surfaceChanged(@NonNull SurfaceHolder holder, int format, int width, int height) {
+
+    }
+
+    @Override
+    public void surfaceDestroyed(@NonNull SurfaceHolder holder) {
+
+    }
+
+    private class DrawFrame extends Thread {
+        private Bitmap bmp;
+        public DrawFrame(Bitmap bmp){
+            this.bmp = bmp;
+        }
+        @Override
+        public void run() {
+            // Log.i(TAG, "drawFrame() running.");
+            Canvas canvas = null;
+            int inx = 0;
+            for (; inx < 1; inx++) {
+                try {
+                    // Draw the current frame
+                    canvas = surfaceHolder.lockCanvas();
+                    if (canvas != null) {
+                        // Clear the canvas
+                        canvas.drawColor(Color.BLACK);
+
+                        // Bitmap tmp = frameQueue.poll(200, TimeUnit.MICROSECONDS);
+                        if(this.bmp != null && !(this.bmp.isRecycled())) {
+                            canvas.drawBitmap(this.bmp, 0, 0, null);
+                            synchronized (this) {
+                                this.wait(FRAME_RATE);
+                            }
+                            this.bmp.recycle();
+                            this.bmp = null;
+                        }
+                    }
+                } catch (InterruptedException e) {
+                    Log.e(TAG, "InterruptedException: " + e);
+                    e.printStackTrace();
+                } finally {
+                    if (canvas != null) {
+                        surfaceHolder.unlockCanvasAndPost(canvas);
+                    }
+                }
+            }
+        }
+    }
+
+    private void setVideoSize(int width, int height) {
+        float videoProportion = (float) width / (float) height;
+
+        // Get the width of the screen
+        int screenWidth = getWindowManager().getDefaultDisplay().getWidth();
+        int screenHeight = getWindowManager().getDefaultDisplay().getHeight();
+        float screenProportion = (float) screenWidth / (float) screenHeight;
+
+        // Get the SurfaceView layout parameters
+        android.view.ViewGroup.LayoutParams lp = videoView.getLayoutParams();
+        if (videoProportion > screenProportion) {
+            lp.width = screenWidth;
+            lp.height = (int) ((float) screenWidth / videoProportion);
+        } else {
+            lp.width = (int) (videoProportion * (float) screenHeight);
+            lp.height = screenHeight;
+        }
+
+        Log.d("setVideoSize", "size info: " + width + ", " + height);
+        //lp.width = width;
+        //lp.height = height;
+
+        // Commit the layout parameters
+        runOnUiThread(() -> {
+            // Commit the layout parameters
+            videoView.setLayoutParams(lp);
+            //surfaceHolder.setFixedSize(lp.width, lp.height);
+            Log.d("setVideoSize", "setFixedSize called: " + lp.width + ", " + lp.height);
+        });
+    }
+
+    private boolean once = true;
+
+    @Override
+    public void callback(Bitmap bmp, int inx) throws InterruptedException {
+        // Log.i(TAG + "_Callback", "callback() called.");
+
+        Bitmap tmp = bmp;
+        runOnUiThread(() -> new DrawFrame(tmp).run());
+        if (once) {
+            setVideoSize(bmp.getWidth(), bmp.getHeight());
+            once = false;
+        }
+
+        Runnable sendFrame = () -> {
+            if (inx < MAX_FRAMES - 1) {
+                try {
+                    //BitmapDataObject bitmapObject = new BitmapDataObject(bmp);
+                    //byte[] serializedBitmap = bitmapObject.compressBitmap();
+                    ByteArrayOutputStream stream = new ByteArrayOutputStream();
+                    //Bitmap downgradedBmp = Bitmap.createScaledBitmap(bmp, (int) (bmp.getHeight() ), (int) (bmp.getWidth()), false);
+                    bmp.compress(Bitmap.CompressFormat.JPEG, 100, stream);
+
+                    byte[] serializedBitmap = stream.toByteArray();
+                    Log.d("bytesOfBitmap", "Bitmap size: " + serializedBitmap.length + ", " + inx);
+
+                    bmp.recycle(); // Should be recycled status.
+                    clientDOS.writeObject(serializedBitmap);
+                    clientDOS.flush();
+                    serializedBitmap = null;
+
+                    // TODO: !! SHOULD CALL THIS METHOD TO AVOID OUT OF MEMORY EXCEPTION !!
+                    clientDOS.reset();
+
+                    stream.close();
+                } catch (MalformedURLException e) {
+                    printLog("MalformedURLException: " + e);
+                    Log.e(TAG, "MalformedURLException: " + e);
+                    e.printStackTrace();
+                } catch (IOException e) {
+                    printLog("IOException: " + e);
+                    Log.e(TAG, "IOException: " + e);
+                    e.printStackTrace();
+                }
+            } else {
+                try {
+                    // new byte[]{1, 2, 3} means "end signal".
+                    clientDOS.writeObject(new byte[]{1, 2, 3});
+                    clientDOS.flush();
+                    Log.d(TAG, "Sent the end signal.");
+                } catch (IOException e) {
+                    printLog("IOException: " + e);
+                    Log.e(TAG, "IOException: " + e);
+                    e.printStackTrace();
+                }
+            }
+        };
+
+        sendFrame.run();
+    }
+
+    private static class ThreadPool implements Executor {
+        @Override
+        public void execute(final Runnable command) {
+            new Thread(command).start();
+        }
+
     }
 
     private void toastMsg(String s) {
@@ -152,8 +322,7 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
             int delta = logScrollView.getBottom() - logScrollView.getScrollY() - logScrollView.getScrollX();
             logScrollView.smoothScrollBy(0, delta);
         });
-
-        logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
+        // logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
     }
 
     protected Thread isServerOnline() { // isReachable 메소드를 통해, 소켓 통신 전에 서버에 접속할 수 있는지, 즉 서버가 열려 있는지를 확인하려고 생성한 함수.
@@ -167,14 +336,16 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
                     try { // 앞서 정의된 ip(192.168.0.XX)와 port(9090)로 새로운 소켓 객체를 할당. new Socket 구문은 try/catch문 작성이 필수이므로 try/catch문도 추가함.
                         serverSocket = new Socket(ip, port);
                         Log.i(TAG, String.valueOf(serverSocket.isConnected()));
-                        InetAddress clientHost = serverSocket.getLocalAddress();
+                        InetAddress clientHost = serverSocket.getInetAddress();
                         int clientPort = serverSocket.getPort();
-                        clientDOS = new DataOutputStream(serverSocket.getOutputStream());
-                        clientDOSFlag = new DataOutputStream(serverSocket.getOutputStream());
+
+                        clientOS = serverSocket.getOutputStream();
+                        clientDOS = new ObjectOutputStream(clientOS);
+                        //clientDOSFlag = new DataOutputStream(serverSocket.getOutputStream());
 
                         printLog("Connection Success.");
-                        printLog("The Client is connected: " + clientHost + ":" + clientPort + ", host: " + clientHost.getHostName());
-                        Log.i(TAG, "Server is connected: " + clientHost + ":" + clientPort + ", host: " + clientHost.getHostName());
+                        printLog("The Client is connected: " + clientHost.getHostName() + ":" + clientPort);
+                        Log.i(TAG, "Server is connected: " + clientHost.getHostName() + ":" + clientPort);
 
                     } catch (IOException e) {
                         printLog("Failed to allocate the serverSocket: " + e);
@@ -194,86 +365,6 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
         });
     }
 
-    // 데이터 실시간 전송 스레드 정의.
-    protected Thread transportThread() {
-        return new Thread(() -> {
-            try {
-                // 소켓 생성.
-                // serverSocket = new Socket(ip, port);
-
-                DataOutputStream clientDOS = new DataOutputStream(serverSocket.getOutputStream());
-                /*new Thread(() -> {
-                    try {
-                        clientDOS.writeBoolean(true);
-                        clientDOS.flush();
-                        Log.i(TAG, "Flushed");
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    }
-                }).start();*/
-
-                printLog("Start the transmission.");
-                Log.i(TAG, "Start the transmission.");
-
-                // 출력물 파일을 담을 File 형 변수 bufferFile 생성.
-                File bufferFile = File.createTempFile(TAG, "mp4");
-
-                //
-                BufferedOutputStream bufferOS = new BufferedOutputStream(new FileOutputStream(bufferFile));
-
-                DataOutputStream outputStream = new DataOutputStream(serverSocket.getOutputStream());
-
-                // 선택된 파일을 InputStream 변수로 초기화.
-                InputStream is = getContentResolver().openInputStream(selectedFile);
-                // 생성자( 대상 InputStream, 버퍼의 크기 설정)
-                BufferedInputStream bIS = new BufferedInputStream(is, 2048);
-
-                // byte[] buffer = new byte[16384]; // == 2^14
-                byte[] buffer = new byte[8192]; // == 2^13
-                int numRead;
-                boolean started = false;
-
-                // 데이터의 다음 바이트를 반환하거나 파일 끝에 도달하면 -1을 반환.
-                while ((numRead = bIS.read(buffer)) != -1) {
-                    Log.i(TAG, "numRead: " + numRead);
-                    //Log.i(TAG, "numRead: "+numRead+", cnt: "+cnt);
-
-                    // buffer[offset(0)]부터 numRead만큼의 바이트를 bufferOS에 씀.
-                    outputStream.write(buffer, 0, numRead);
-                    // 버퍼가 모두 채워지거나 close(), flush() 호출 → 버퍼의 모든 내용을 파일에 출력.
-                    outputStream.flush();
-                    printLog("Current bytes length sent: " + numRead);
-
-                    clientDOS.write(buffer, 0, numRead);
-                    clientDOS.flush();
-
-                    totalRead += numRead;
-
-                    if (totalRead >= totalSize && !started) {
-                        //setSourceAndStartPlay(bufferFile);
-                        Log.i(TAG, "numRead: " + numRead);
-                        Log.i(TAG, "totalRead: " + totalRead);
-                        Log.i(TAG, "BufferHIT:StartPlay");
-                        started = true;
-                        break;
-                    }
-                }
-                printLog("The end of the loop.");
-                Log.i(TAG, "The end of the loop.");
-
-                clientDOS.close();
-            } catch (MalformedURLException e) {
-                printLog("MalformedURLException: " + e);
-                Log.e(TAG, "MalformedURLException: " + e);
-                e.printStackTrace();
-            } catch (IOException e) {
-                printLog("IOException: " + e);
-                Log.e(TAG, "IOException: " + e);
-                e.printStackTrace();
-            }
-        });
-    }
-
     @Override
     public boolean onCreateOptionsMenu(Menu menu) { //액션바 속 메뉴 설정
         getMenuInflater().inflate(R.menu.menu, menu);
@@ -281,191 +372,17 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
     }
 
     @Override
-    public void onSurfaceTextureAvailable(@NonNull SurfaceTexture surface, int width, int height) {
-        Log.d(TAG, "SurfaceTexture ready (" + width + "x" + height + ")");
-        mSurfaceTextureReady = true;
-        //updateControls();
-    }
-
-    @Override
-    public void onSurfaceTextureSizeChanged(@NonNull SurfaceTexture surface, int width, int height) {
-
-    }
-
-    @Override
-    public boolean onSurfaceTextureDestroyed(@NonNull SurfaceTexture surface) {
-        return false;
-    }
-
-    private Uri getImageUri(Context context, Bitmap inImage) throws IOException {
-        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        inImage.compress(Bitmap.CompressFormat.PNG, 100, bytes);
-        File f = File.createTempFile("tmp", ".png");
-        //String path = MediaStore.Images.Media.insertImage(context.getContentResolver(), inImage, "Title", null);
-        return Uri.fromFile(f);
-        //return Uri.parse(path);
-    }
-
-    @Override
-    public void onSurfaceTextureUpdated(@NonNull SurfaceTexture surface) {
-        if (ready == true) {
-            new Thread(() -> {
-                try {
-                    Bitmap tmp = videoView.getBitmap();
-                    Uri bitmapToURI = getImageUri(getApplicationContext(), tmp);
-                    Log.i(TAG,"uri info: " + bitmapToURI.toString());
-                    //printLog("uri info: " + bitmapToURI.toString());
-                    //ByteArrayOutputStream stream = new ByteArrayOutputStream();
-                    //tmp.compress(Bitmap.CompressFormat.PNG, 100, stream);
-                    //byte[] compressdBuffer = stream.toByteArray();
-
-                    /*new Thread(() -> {
-                        try {
-                            clientDOS.writeBoolean(true);
-                            clientDOS.flush();
-                            Log.i(TAG, "Flushed");
-                        } catch (IOException e) {
-                            throw new RuntimeException(e);
-                        }
-                    }).start();*/
-
-
-                    printLog("Start the transmission.");
-                    Log.i(TAG, "Start the transmission.");
-
-                    //clientDOS.write(buffer, 0, buffer.length);
-                    //clientDOS.flush();
-
-
-                    //DataOutputStream outputStream = new DataOutputStream(serverSocket.getOutputStream());
-
-                    // 선택된 파일을 InputStream 변수로 초기화.
-                    InputStream is = getContentResolver().openInputStream(bitmapToURI);
-                    // 생성자( 대상 InputStream, 버퍼의 크기 설정)
-                    BufferedInputStream bIS = new BufferedInputStream(is, 8192);
-                    /*clientDOS.write(compressdBuffer);
-                    Log.i(TAG, "compressdBuffer: " + compressdBuffer.length);
-                    printLog("compressdBuffer length: " + compressdBuffer.length + ", cnt: " + (++cnt));
-                    clientDOS.flush();*/
-
-                    // byte[] buffer = new byte[16384]; // == 2^14
-                    byte[] buffer = new byte[8192]; // == 2^13
-                    int numRead;
-                    boolean started = false;
-                    /*
-                    int f = bIS.read(buffer);
-                    Log.i(TAG, "f: " + f);
-                    */
-                    // 데이터의 다음 바이트를 반환하거나 파일 끝에 도달하면 -1을 반환.
-                    while ((numRead = bIS.read(buffer)) != -1) {
-                        Log.i(TAG, "numRead: " + numRead);
-                        //Log.i(TAG, "numRead: "+numRead+", cnt: "+cnt);
-
-                        // buffer[offset(0)]부터 numRead만큼의 바이트를 bufferOS에 씀.
-                        //outputStream.write(buffer, 0, numRead);
-                        // 버퍼가 모두 채워지거나 close(), flush() 호출 → 버퍼의 모든 내용을 파일에 출력.
-                        //outputStream.flush();
-                        printLog("Current bytes length sent: " + numRead);
-
-                        clientDOS.write(buffer, 0, numRead);
-                        clientDOS.flush();
-
-                        clientDOSFlag.writeBoolean(false);
-                        clientDOSFlag.flush();
-
-                        totalRead += numRead;
-
-                        if (totalRead >= totalSize && !started) {
-                            //setSourceAndStartPlay(bufferFile);
-                            Log.i(TAG, "numRead: " + numRead);
-                            Log.i(TAG, "totalRead: " + totalRead);
-                            break;
-                        }
-                    }
-                    clientDOSFlag.writeBoolean(true);
-                    clientDOSFlag.flush();
-                    printLog("The end of the loop.");
-                    Log.i(TAG, "The end of the loop.");
-
-                } catch (MalformedURLException e) {
-                    printLog("MalformedURLException: " + e);
-                    Log.e(TAG, "MalformedURLException: " + e);
-                    e.printStackTrace();
-                } catch (IOException e) {
-                    printLog("IOException: " + e);
-                    Log.e(TAG, "IOException: " + e);
-                    e.printStackTrace();
-                }
-            }).start();
-        }
-    }
-
-    @Override
-    public void playbackStopped() {
-        Log.d(TAG, "playback stopped");
-        mShowStopLabel = false;
-        mPlayTask = null;
-    }
-
-    private void stopPlayback() {
-        if (mPlayTask != null) {
-            mPlayTask.requestStop();
-        }
-    }
-
-    public void clickPlayStop() {
-        if (mShowStopLabel) {
-            Log.d(TAG, "stopping movie");
-            stopPlayback();
-            // Don't update the controls here -- let the task thread do it after the movie has
-            // actually stopped.
-            //mShowStopLabel = false;
-            //updateControls();
-        } else {
-            if (mPlayTask != null) {
-                Log.w(TAG, "movie already playing");
-                return;
-            }
-            Log.d(TAG, "starting movie");
-            SpeedControlCallback callback = new SpeedControlCallback();
-            /*if (((CheckBox) findViewById(R.id.locked60fps_checkbox)).isChecked()) {
-                // TODO: consider changing this to be "free running" mode
-                callback.setFixedPlaybackRate(60);
-            }*/
-            SurfaceTexture st = videoView.getSurfaceTexture();
-            surface = new Surface(st);
-            DecodingClass player = null;
-            try {
-                player = new DecodingClass(
-                        file, surface, callback);
-            } catch (IOException ioe) {
-                Log.e(TAG, "Unable to play movie", ioe);
-                surface.release();
-                return;
-            }
-            // adjustAspectRatio(player.getVideoWidth(), player.getVideoHeight());
-
-            mPlayTask = new DecodingClass.PlayTask(player, this);
-
-            mShowStopLabel = true;
-            //updateControls();
-            mPlayTask.execute();
-            ready = true;
-        }
-    }
-
-    @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) { // startActivityForResult 실행 후, 값을 전달 받는 액티비티 함수. startActivityForResult 실행 후 파일 탐색기 액티비티에서 파일을 선택 하면, 이 선택 된 파일이 전달할 값이 됨.
         // 그러므로 onActivityResult에 이 선택 된 파일을 전달함.
         super.onActivityResult(requestCode, resultCode, data); // 생성자 호출
-        Log.i("videocrypto", "onActivityResult");
+        Log.i(TAG, "onActivityResult: " + requestCode + ", " + resultCode + ", " + data.toString());
 
         if (requestCode == REQ_CODE && resultCode == Activity.RESULT_OK) { // 요청 코드가 사용자가 정의한 값이랑 동일하고, 결과가 OK 상태(정상적)인 경우:
             if (data != null) { // 전달 받은 값(파일 탐색기에서 선택한 파일)이 존재할 경우:
                 selectedFile = data.getData(); // URI 객체인 selectedFile에 그 값을 할당.
                 String filename = queryName(getContentResolver(), selectedFile);
-                Log.i("videocrypto_filename", filename);
-                String fileDir = "null";
+                Log.i(TAG, "File name: " + filename);
+                fileDir = null;
 
                 try {
                     file = getFile(getApplicationContext(), selectedFile);
@@ -476,8 +393,91 @@ public class VideoCryptoActivity extends AppCompatActivity implements TextureVie
                 }
 
                 directoryText.setText(fileDir); // fileName의 경로를 directoryText에 할당.
-                totalSize = Integer.parseInt(getRealSizeFromUri(this, selectedFile));
+                totalSize = Long.parseLong(getRealSizeFromUri(this, selectedFile));
                 Log.i(TAG, "size: " + totalSize);
+
+                MediaExtractor me = new MediaExtractor();
+                MediaMetadataRetriever mmr = new MediaMetadataRetriever();
+                mmr.setDataSource(fileDir);
+                MAX_FRAMES = Integer.parseInt(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT));
+
+                Log.d("bitratevideo", "METADATA_KEY_CAPTURE_FRAMERATE: " + mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE));
+                Log.d("bitratevideo", "METADATA_KEY_SAMPLERATE: " + mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_SAMPLERATE));
+                try {
+                    me.setDataSource(fileDir);
+                    int numTracks = me.getTrackCount();
+                    for (int i = 0; i < numTracks; ++i) {
+                        MediaFormat format = me.getTrackFormat(i);
+                        String mime = format.getString(MediaFormat.KEY_MIME);
+                        if (mime.startsWith("video/")) {
+                            if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) {
+                                Log.d("framerateinfo", "KEY_FRAME_RATE: " + format.getInteger(MediaFormat.KEY_FRAME_RATE));
+                                Log.d("framerateinfo", "KEY_I_FRAME_INTERVAL: " + format.getString(MediaFormat.KEY_I_FRAME_INTERVAL));
+                                Log.d("framerateinfo", "format: " + format);
+
+                                new Thread(() -> {
+                                    try {
+                                        FRAME_RATE = format.getInteger(MediaFormat.KEY_FRAME_RATE);
+                                        clientDOS.writeInt(format.getInteger(MediaFormat.KEY_FRAME_RATE));
+                                        clientDOS.flush();
+                                    } catch (IOException e) {
+                                        e.printStackTrace();
+                                    }
+                                }).start();
+                            } else {
+                                new Thread(() -> {
+                                    try {
+                                        clientDOS.writeInt(50);
+                                        clientDOS.flush();
+                                    } catch (IOException e) {
+                                        e.printStackTrace();
+                                    }
+                                }).start();
+                            }
+                            break;
+                        }
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
+                } finally {
+                    //Release stuff
+                    try {
+                        me.release();
+                        mmr.release();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }
+
+                Log.i(TAG, "MAX_FRAMES: " + MAX_FRAMES);
+
+                Log.i(TAG, "Changed size of surface: " + videoView.getLayoutParams().width + ", " + videoView.getLayoutParams().height);
+
+                try {
+                    ThreadPool threadPool = new ThreadPool();
+                    extractor = new ExtractBitmaps(this);
+                    ExtractBitmaps.inputFile = file;
+                    Thread extract = null;
+
+                    try {
+                        extract = new Thread(() -> {
+                            curInx = 0;
+                            try {
+                                extractor.testExtractMpegFrames();
+                                Log.d(TAG, "extractor called.");
+                            } catch (Throwable e) {
+                                e.printStackTrace();
+                            }
+                        });
+                    } catch (Throwable e) {
+                        Log.e(TAG, "Failed to run ExtractBimap: " + e);
+                        e.printStackTrace();
+                    }
+                    threadPool.execute(extract);
+                } catch (Exception e) {
+                    //Log.e(TAG, "surface view error : " + e.getMessage());
+                    e.printStackTrace();
+                }
             }
         }
     }

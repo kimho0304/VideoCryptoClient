@@ -69,7 +69,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginBottom="20px"
-                        android:text="  하드웨어 암호모듈과 USB로 연결되고 사용자가 선택한 테스트를 통해 성능 결과를 확인할 수 있다.​"
+                        android:text="  하드웨어 암호모듈과 USB로 연결되고 사용자가 선택한 테스트를 통해 성능 결과를 확인할 수 있다."
                         android:textColor="#ffffff"
                         android:textSize="7pt" />
                 </LinearLayout>

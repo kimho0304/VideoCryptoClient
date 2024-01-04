@@ -66,8 +66,5 @@ public class Main extends AppCompatActivity {
         portNum = getIntent().getIntExtra("portNum", -1);
         deviceId = getIntent().getIntExtra("deviceId", -1);
         baudRate = getIntent().getIntExtra("baudRate", 115200);
-
-        ActionBar actionBar = getSupportActionBar();
-        //actionBar.show();
     }
 }
