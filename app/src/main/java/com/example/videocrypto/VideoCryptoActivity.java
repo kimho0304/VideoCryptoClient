@@ -11,7 +11,6 @@ import android.graphics.Color;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.media.MediaMetadataRetriever;
-import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -38,7 +37,6 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.example.videocrypto.util.ExtractBitmaps;
-import com.example.videocrypto.util.Locker;
 import com.example.videocrypto.util.SendFramesCallback;
 
 import java.io.ByteArrayOutputStream;
@@ -71,7 +69,6 @@ public class VideoCryptoActivity extends AppCompatActivity  implements SurfaceHo
     private String ip = null;
     private final int port = 9090;
     private File file;
-    public static Locker locker;
     private String fileDir;
 
     // UI variables definition ↓
@@ -79,7 +76,6 @@ public class VideoCryptoActivity extends AppCompatActivity  implements SurfaceHo
     private SurfaceView videoView;
     private SurfaceHolder surfaceHolder;
     private boolean isLoop;
-    private MediaPlayer mediaPlayer;
     private TextView directoryText, logText;
     private EditText ipText;
     private ScrollView logScrollView;
@@ -91,16 +87,7 @@ public class VideoCryptoActivity extends AppCompatActivity  implements SurfaceHo
     ArrayBlockingQueue<Bitmap> frameQueue;
 
     @Override
-    protected void onResume() { //화면에 나타나있고 실행 중일 때
-        super.onResume();
-    }
-
-    protected void onPause() { //액티비티 화면의 일부가 다른 액티비티에 가려질 때
-        super.onPause();
-    }
-
-    @Override
-    protected void onDestroy() { //화면에 나타나있고 실행 중일 때
+    protected void onDestroy() {
         super.onDestroy();
         if (clientOS != null && clientDOS != null) {
             try {
@@ -124,7 +111,6 @@ public class VideoCryptoActivity extends AppCompatActivity  implements SurfaceHo
 
         // 메인 스레드를 통해 UI 작업을 위한 메인 루퍼 등록.
         mainHandler = new Handler(Looper.getMainLooper());
-        locker = new Locker();
         frameQueue = new ArrayBlockingQueue<>(1024, true);
 
         logScrollView = findViewById(R.id.logScrollView);
@@ -133,17 +119,9 @@ public class VideoCryptoActivity extends AppCompatActivity  implements SurfaceHo
         surfaceHolder = videoView.getHolder();
         surfaceHolder.addCallback(this);
 
-        mediaPlayer = new MediaPlayer();
-        Log.i(TAG, "mediaPlayer constructor set.");
-
         directoryText = findViewById(R.id.fileDirectoryText);
         logText = findViewById(R.id.logText);
         ipText = findViewById(R.id.ipText);
-
-        isLoopingSet = findViewById(R.id.isLooping);
-        isLoopingSet.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            isLoop = isChecked;
-        });
 
         connectBtn = findViewById(R.id.connectBtn);
         connectBtn.setOnClickListener(view -> {
@@ -156,10 +134,6 @@ public class VideoCryptoActivity extends AppCompatActivity  implements SurfaceHo
                     openFile(); //openFile() 실행.
                 }
         );
-
-        send_btn = findViewById(R.id.sendBtn); // 데이터 전송 버튼 등록.
-        send_btn.setEnabled(false);
-        // send_btn.setOnClickListener(view -> new ClientTask().execute());
     }
 
     @Override
@@ -317,7 +291,6 @@ public class VideoCryptoActivity extends AppCompatActivity  implements SurfaceHo
                     clientDOS.writeObject(new byte[]{1, 2, 3});
                     clientDOS.flush();
                     Log.d(TAG, "Sent the end signal.");
-                    //mLocker.unlock();
                 } catch (IOException e) {
                     printLog("IOException: " + e);
                     Log.e(TAG, "IOException: " + e);
@@ -396,29 +369,6 @@ public class VideoCryptoActivity extends AppCompatActivity  implements SurfaceHo
     public boolean onCreateOptionsMenu(Menu menu) { //액션바 속 메뉴 설정
         getMenuInflater().inflate(R.menu.menu, menu);
         return true;
-    }
-
-    private File drawableToFile(int drawableId) throws IOException {
-        InputStream iS = null;
-        OutputStream oS = null;
-        File f = null;
-        try {
-            f = File.createTempFile("video", ".mp4");
-            iS = getResources().openRawResource(drawableId);
-            oS = new FileOutputStream(f);
-            byte buf[] = new byte[8192];
-            int len;
-            while ((len = iS.read(buf)) != -1)
-                oS.write(buf, 0, len);
-        } catch (IOException e) {
-            Log.e(TAG, "Failed to convert drawable to file: " + e);
-            e.printStackTrace();
-        }finally {
-            oS.close();
-            iS.close();
-        }
-
-        return f;
     }
 
     @Override
@@ -530,16 +480,6 @@ public class VideoCryptoActivity extends AppCompatActivity  implements SurfaceHo
                 }
             }
         }
-    }
-
-    private Uri getImageUri(Context context, Bitmap inImage) throws IOException {
-        File f = File.createTempFile("tmp", ".png");
-        OutputStream os = new FileOutputStream(f);
-        inImage.compress(Bitmap.CompressFormat.PNG, 100, os);
-        os.close();
-        //String path = MediaStore.Images.Media.insertImage(context.getContentResolver(), inImage, "Title", null);
-        return Uri.fromFile(f);
-        //return Uri.parse(path);
     }
 
     public static File getFile(Context context, Uri uri) throws IOException {
